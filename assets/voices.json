@@ -3,6 +3,7 @@
     {
       "id": "mei",
       "label": "Mei (女声)",
+      "label_en": "Mei (female)",
       "size": 862503,
       "sample_rate": 48000,
       "license": "CC BY 3.0",
@@ -12,6 +13,7 @@
     {
       "id": "mei16",
       "label": "Mei (女声・16kHz 高速)",
+      "label_en": "Mei (female, 16 kHz fast)",
       "size": 862503,
       "sample_rate": 16000,
       "license": "CC BY 3.0",

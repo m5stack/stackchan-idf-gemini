@@ -1317,9 +1317,22 @@ refreshVoiceDbStatus();
 // 使い、ロード中ボイスの「名前」を状態表示に出す。
 let hmmCatalog = [];
 
+const HMM_VOICE_LABELS_EN = Object.freeze({
+  mei: 'Mei (female)',
+  mei16: 'Mei (female, 16 kHz fast)',
+});
+
+function hmmVoiceLabel(v) {
+  if (document.documentElement.lang !== 'en') return v.label;
+  const label = HMM_VOICE_LABELS_EN[v.id] || v.label_en || v.label || v.id;
+  return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/.test(label)
+    ? `Voice ${v.id}`
+    : label;
+}
+
 function hmmLabelForSize(bytes) {
   const hit = hmmCatalog.find((v) => v.size === bytes);
-  return hit ? hit.label : null;
+  return hit ? hmmVoiceLabel(hit) : null;
 }
 
 async function refreshSanottsStatus() {
@@ -1443,7 +1456,7 @@ async function loadHmmCatalog() {
     for (const v of hmmCatalog) {
       const o = document.createElement('option');
       o.value = v.id;
-      o.textContent = `${v.label} (${Math.round((v.size||0)/1024)} KiB, ${v.license||''})`;
+      o.textContent = `${hmmVoiceLabel(v)} (${Math.round((v.size||0)/1024)} KiB, ${v.license||''})`;
       sel.appendChild(o);
     }
     showHmmAttribution(sel.value);

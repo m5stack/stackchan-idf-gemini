@@ -251,6 +251,7 @@ CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=40
 # defaults stay off / upstream so a tree without these lines (or with
 # them commented) builds the original multi-provider firmware.
 CONFIG_STACKCHAN_GEMINI_ONLY=y
+CONFIG_STACKCHAN_SETTINGS_ENGLISH=y
 CONFIG_STACKCHAN_BOOT_SPLASH=y
 CONFIG_STACKCHAN_BOOT_SPLASH_MS=2000
 CONFIG_STACKCHAN_GEMINI_DEFAULT_MODEL="gemini-3.8-live"

@@ -113,6 +113,18 @@ menu "Stack-chan product profile (Gemini customer build)"
             value. OpenAI / XiaoZhi source stays in the tree. Turn off to
             restore upstream multi-provider behaviour.
 
+    config STACKCHAN_SETTINGS_ENGLISH
+        bool "Ship the device settings pages in English"
+        default y if STACKCHAN_GEMINI_ONLY
+        default n
+        help
+            Build the self-contained Wi-Fi settings page from the upstream
+            Japanese source, then translate the complete injected HTML and
+            both inlined JavaScript modules before embedding it. Japanese
+            sources remain untouched for upstream / non-Gemini builds. The
+            build fails rather than shipping a partially translated page when
+            a new Japanese string needs an English catalog entry.
+
     config STACKCHAN_BOOT_SPLASH
         bool "Show Google Cloud logo at boot"
         default n

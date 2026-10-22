@@ -2044,6 +2044,7 @@ function applyCapabilityGating() {
     applyFirmwareChannel(fwEl.textContent);
   }
   if (geminiOnly && window.StackchanGeminiUi) {
+    StackchanGeminiUi.ensureFields();
     StackchanGeminiUi.hideNonGemini();
     StackchanGeminiUi.translateTree(document.body);
   }
