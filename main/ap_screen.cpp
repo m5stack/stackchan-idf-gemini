@@ -21,6 +21,7 @@ namespace {
 char g_last_ssid[33] = {0};
 char g_last_pw[33]   = {0};
 char g_last_ip[16]   = {0};
+bool g_last_first_run = false;
 bool g_painted = false;
 
 // Exit-button rect in panel coords (set by the most recent draw call).
@@ -78,12 +79,14 @@ bool draw(M5GFX& display)
     if (!wifi_ap_info(ssid, sizeof(ssid), pw, sizeof(pw), ip, sizeof(ip))) {
         return false;
     }
+    const bool first_run = wifi_ap_first_run();
     // Only repaint when the credentials actually changed — saves the full
     // QR render cost on every render-task tick.
     if (g_painted &&
         std::strcmp(ssid, g_last_ssid) == 0 &&
         std::strcmp(pw, g_last_pw) == 0 &&
-        std::strcmp(ip, g_last_ip) == 0) {
+        std::strcmp(ip, g_last_ip) == 0 &&
+        first_run == g_last_first_run) {
         return false;
     }
     // Use snprintf rather than strncpy(dst, src, sizeof-1): GCC 14 (IDF 5.5)
@@ -93,6 +96,7 @@ bool draw(M5GFX& display)
     std::snprintf(g_last_ssid, sizeof(g_last_ssid), "%s", ssid);
     std::snprintf(g_last_pw, sizeof(g_last_pw), "%s", pw);
     std::snprintf(g_last_ip, sizeof(g_last_ip), "%s", ip);
+    g_last_first_run = first_run;
 
     const std::int32_t W = display.width();
     const std::int32_t H = display.height();
@@ -114,30 +118,32 @@ bool draw(M5GFX& display)
         ? static_cast<int>(W * (1.0f - 0.70710678f) * 0.5f) + 4
         : 4;
 
-    // Bottom exit-button band. Height ~ 1/6 of panel height on touch boards.
+    // Bottom exit-button band for the existing settings AP. First-run setup
+    // deliberately has no exit action: closing that AP would strand setup.
+    // Height ~ 1/6 of panel height on touch boards.
     // On round panels the band can extend slightly below the inscribed
     // square because the button is centred horizontally — the visible
     // circle is widest along the vertical axis, narrowest at the corners.
-    const int btn_h = tiny ? 0
+    const int btn_h = (tiny || first_run) ? 0
                     : round_ ? 40
                     : 30;
     const int btn_band_y = tiny ? H : (H - btn_h - (round_ ? 18 : 4));
-    const int btn_w = tiny ? 0
+    const int btn_w = (tiny || first_run) ? 0
                     : round_ ? 200
                     : (W - 24);
     const int btn_x = (W - btn_w) / 2;
 
-    // QR + caption block fills the area above the button band. Pick a QR
-    // size that leaves room for the title (top) and 3 caption lines plus
-    // the button band (bottom).
-    const int caption_lines = tiny ? 1 : 3;
-    const int caption_line_h = round_ ? 22 : 14;
+    // QR + caption block fills the area above the button band. First-run
+    // adds the phone CTA and URL while removing the exit button; the normal
+    // settings AP keeps its three credential lines plus the exit action.
+    const int caption_lines = tiny ? 2 : (first_run ? 4 : 3);
+    const int caption_line_h = round_ ? 22 : (tiny ? 10 : 14);
     const int caption_h = caption_lines * caption_line_h + 4;
     const int title_h = tiny ? 0 : (round_ ? 32 : 20);
     const int top_margin = tiny ? 8 : (round_ ? inset : 4);
 
     const int avail_y_for_qr = btn_band_y - top_margin - title_h - caption_h;
-    const int qr_max_by_w = tiny ? (W - 18)
+    const int qr_max_by_w = tiny ? (W - 28)
                           : round_ ? (W * 220 / 466)
                           : 150;
     const int qr_w = (avail_y_for_qr < qr_max_by_w) ? avail_y_for_qr : qr_max_by_w;
@@ -182,16 +188,24 @@ bool draw(M5GFX& display)
         std::snprintf(buf, sizeof(buf), "PW:   %s", pw);
         display.drawString(buf, W / 2, ty);
         ty += caption_line_h;
+        if (first_run) {
+            display.drawString(config::tr("Continue on your phone.", "スマートフォンで続行してください。"),
+                               W / 2, ty);
+            ty += caption_line_h;
+        }
         std::snprintf(buf, sizeof(buf), "http://%s/", ip);
         display.drawString(buf, W / 2, ty);
     } else {
-        // 128×128: only the SSID fits readably under the QR. iOS-camera-
-        // scan-then-tap-join carries the URL via the captive portal probe,
-        // so the URL line isn't critical here.
+        // 128×128: SSID + password below the QR. The captive portal carries
+        // the setup URL after joining, so it is omitted here for legibility.
         display.setFont(&fonts::Font0);
         display.setTextColor(TFT_BLACK, TFT_WHITE);
         display.setTextDatum(lgfx::textdatum_t::top_center);
-        display.drawString(ssid, W / 2, qr_y + qr_w + 2);
+        char buf[48];
+        std::snprintf(buf, sizeof(buf), "SSID %s", ssid);
+        display.drawString(buf, W / 2, qr_y + qr_w + 2);
+        std::snprintf(buf, sizeof(buf), "PW %s", pw);
+        display.drawString(buf, W / 2, qr_y + qr_w + 2 + caption_line_h);
     }
 
     // Exit button (touch boards only). Red so it reads as "stop/cancel"
@@ -221,7 +235,8 @@ bool handle_tap(int x, int y)
     // hidden device_ui underneath (whose top-right corner opens the 5-tab
     // settings UI), which would surprise the user when AP is later
     // dismissed and the UI reappears already open.
-    if (g_btn_w > 0 && g_btn_h > 0 &&
+    if (!wifi_ap_first_run() &&
+        g_btn_w > 0 && g_btn_h > 0 &&
         x >= g_btn_x && x < g_btn_x + g_btn_w &&
         y >= g_btn_y && y < g_btn_y + g_btn_h) {
         wifi_disable_ap_mode();

@@ -114,6 +114,13 @@ static_assert(static_cast<int>(LipSyncMode::Brightness) == 0 &&
 struct DeviceConfig {
     std::string wifi_ssid;
     std::string wifi_password;
+    // Optional IPv4 static network configuration for the STA interface.
+    // Empty static IP = DHCP. Non-empty static IP implies a /24 prefix,
+    // gateway is required, and DNS is an optional main DNS server (the
+    // gateway is used when DNS is empty). Staged, like the Wi-Fi credentials.
+    std::string wifi_static_ip;
+    std::string wifi_gateway;
+    std::string wifi_dns;
     std::string openai_api_key;
     std::string gemini_api_key;
     // Gemini Live model id and prebuilt voice name. Empty → Kconfig default

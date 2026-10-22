@@ -56,6 +56,11 @@ httpd_handle_t handle();
 // Idempotent. Thread-safe.
 void set_provisioning_mode(bool active);
 
+// Mark the HTTP service as serving the dedicated first-run onboarding flow.
+// While set, GET / redirects to /setup and /api/status reports first_run_mode.
+// Thread-safe and, like set_provisioning_mode(), valid before httpd_start().
+void set_first_run_mode(bool active);
+
 // Update the battery snapshot (mV / mA / percent) surfaced by /api/status.
 // No-op until the HTTP server has started. Thread-safe.
 void set_battery(int millivolts, int milliamps, int percent);

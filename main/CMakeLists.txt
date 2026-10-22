@@ -20,6 +20,7 @@ set(_main_priv_reqs
     esp_wifi
     esp_netif
     esp_event
+    esp_http_server
     app_update
     lwip
     esp_http_client
@@ -52,6 +53,7 @@ set(_main_srcs
     "device_ui.cpp"
     "diag.cpp"
     "face_config.cpp"
+    "first_run.cpp"
     "i2c_dump.cpp"
     "led_task.cpp"
     "lt_timer.cpp"
@@ -92,6 +94,12 @@ idf_component_register(
     PRIV_REQUIRES ${_main_priv_reqs}
 )
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_20)
+
+target_add_binary_data(
+    ${COMPONENT_LIB}
+    "${PROJECT_DIR}/main/web/first_run_setup.html"
+    TEXT
+)
 
 if(CONFIG_STACKCHAN_BOOT_SPLASH)
     target_add_binary_data(${COMPONENT_LIB} "${PROJECT_DIR}/assets/splash/splash_cores3.png" BINARY)

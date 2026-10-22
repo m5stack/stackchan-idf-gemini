@@ -119,6 +119,10 @@ std::atomic<bool> g_wifi_connected{false};
 // behind the Basic-auth gate (Android's captive WebView surfaces the 401
 // as ERR_HTTP_RESPONSE_CODE_FAILURE; observed on HW).
 std::atomic<bool> g_provisioning_mode{false};
+// Dedicated step-by-step onboarding flow. Kept separate from provisioning_mode
+// because the setup AP always uses provisioning mode, but only the first-run
+// flow redirects / to /setup or exposes first_run_mode in status.
+std::atomic<bool> g_first_run_mode{false};
 // Cached battery snapshot served by /api/status. -1 mV / percent → unknown.
 int g_battery_mv = -1;
 int g_battery_ma = 0;
@@ -451,6 +455,7 @@ esp_err_t handle_status_get(httpd_req_t* req)
     if (!require_auth(req)) return ESP_OK;
     const bool wifi_ok = g_wifi_connected.load();
     const bool prov_mode = g_provisioning_mode.load();
+    const bool first_run_mode = g_first_run_mode.load();
     xSemaphoreTake(g_mutex, portMAX_DELAY);
     const auto cfg = g_active;
     const int bat_mv = g_battery_mv;
@@ -478,8 +483,12 @@ esp_err_t handle_status_get(httpd_req_t* req)
     body += "\"ip\":\"" + escape_json(ip) + "\",";
     body += "\"wifi_connected\":" + std::string(wifi_ok ? "true" : "false") + ",";
     body += "\"provisioning_mode\":" + std::string(prov_mode ? "true" : "false") + ",";
+    body += "\"first_run_mode\":" + std::string(first_run_mode ? "true" : "false") + ",";
     body += "\"has_camera\":" + std::string(has_camera ? "true" : "false") + ",";
     body += "\"ssid\":\"" + escape_json(cfg.wifi_ssid) + "\",";
+    body += "\"wifi_static_ip\":\"" + escape_json(cfg.wifi_static_ip) + "\",";
+    body += "\"wifi_gateway\":\"" + escape_json(cfg.wifi_gateway) + "\",";
+    body += "\"wifi_dns\":\"" + escape_json(cfg.wifi_dns) + "\",";
     body += "\"has_password\":" + std::string(cfg.wifi_password.empty() ? "false" : "true") + ",";
     body += "\"has_openai_key\":" + std::string(cfg.openai_api_key.empty() ? "false" : "true") + ",";
     body += "\"has_gemini_key\":" + std::string(cfg.gemini_api_key.empty() ? "false" : "true") + ",";
@@ -2264,6 +2273,13 @@ esp_err_t handle_dance_upload_post(httpd_req_t* req)
 
 esp_err_t handle_root_get(httpd_req_t* req)
 {
+    if (g_first_run_mode.load() &&
+        std::strcmp(req->uri, "/setup") != 0) {
+        httpd_resp_set_status(req, "302 Found");
+        httpd_resp_set_hdr(req, "Location", "/setup");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        return httpd_resp_send(req, nullptr, 0);
+    }
     if (!require_auth(req)) {
         ESP_LOGW(kTag, "GET / -> 401 (auth)");
         return ESP_OK;
@@ -2424,6 +2440,12 @@ void set_provisioning_mode(bool active)
     // No mutex gate: must stick even before register_handlers() runs (see
     // the g_provisioning_mode declaration comment).
     g_provisioning_mode.store(active);
+}
+
+void set_first_run_mode(bool active)
+{
+    // Same init-ordering contract as set_provisioning_mode().
+    g_first_run_mode.store(active);
 }
 
 void set_battery(int millivolts, int milliamps, int percent)

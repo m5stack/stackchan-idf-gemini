@@ -34,6 +34,10 @@ struct DemoLoopArgs {
     // head-wobble are suppressed (the rest — expression, balloon, babble —
     // still runs). See OperationMode::EspNowRemote.
     bool external_servo_control = false;
+    // Gemini customer first-run prompt / onboarding. While true, suppress all
+    // avatar idle behaviour and gestures that could steal the panel or audio;
+    // keep panel input, speaker housekeeping, and battery polling alive.
+    bool (*first_run_active)() = nullptr;
     ServoLimits limits;                        // random-pose ranges
 };
 

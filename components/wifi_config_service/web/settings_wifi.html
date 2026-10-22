@@ -431,6 +431,27 @@
   <label for="password">Wi-Fi パスワード</label>
   <input type="password" id="password" maxlength="64" placeholder="（変更しない場合は空欄）">
 
+  <h2 class="section-title" style="margin-top:0.5rem">静的 IP 設定</h2>
+  <p class="hint" style="margin-bottom:0.5rem">
+    空欄なら DHCP を使用します。静的 IP は /24 サブネットで設定され、ゲートウェイは必須です。
+    DNS が空欄の場合はゲートウェイを使用します。保存後の再起動で反映されます。
+  </p>
+  <label for="wifi-static-ip">静的 IP アドレス</label>
+  <input type="text" id="wifi-static-ip" maxlength="15" inputmode="decimal"
+         autocomplete="off" placeholder="192.168.1.50（空欄 = DHCP）">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.7rem;margin-top:0.7rem">
+    <div>
+      <label for="wifi-gateway">ゲートウェイ</label>
+      <input type="text" id="wifi-gateway" maxlength="15" inputmode="decimal"
+             autocomplete="off" placeholder="192.168.1.1">
+    </div>
+    <div>
+      <label for="wifi-dns">DNS (任意)</label>
+      <input type="text" id="wifi-dns" maxlength="15" inputmode="decimal"
+             autocomplete="off" placeholder="空欄 = ゲートウェイ">
+    </div>
+  </div>
+
   <h2 class="section-title" style="margin-top:0.5rem">デバイス名 (BLE / mDNS)</h2>
   <p class="hint" style="margin-bottom:0.5rem">
     BLE アドバタイズ名と mDNS ホスト名のもとになります。空欄なら自動生成 (Stackchan-XXXXXX)。
@@ -1641,6 +1662,9 @@ async function refresh() {
          + (s.battery_mv / 1000).toFixed(2) + 'V ' + (s.battery_ma | 0) + 'mA');
 
     $('ssid').value = s.ssid || '';
+    $('wifi-static-ip').value = s.wifi_static_ip || '';
+    $('wifi-gateway').value = s.wifi_gateway || '';
+    $('wifi-dns').value = s.wifi_dns || '';
     $('provider').value = String(s.provider ?? 0);
     if (s.gemini_model && $('gemini-model')) $('gemini-model').value = s.gemini_model;
     if (s.gemini_voice && $('gemini-voice')) $('gemini-voice').value = s.gemini_voice;
@@ -1769,6 +1793,15 @@ async function apply() {
 
     if (ssid)      { await postText('/api/ssid', ssid);                       log('SSID 送信', 'ok'); }
     if (pass)      { await postText('/api/password', pass);                   log('パスワード送信', 'ok'); }
+    // Stage the three static-IPv4 fields together. Empty static IP switches
+    // the STA interface back to DHCP. /api/settings validates the batch before
+    // staging anything, then the normal Apply action persists it to NVS.
+    await postText('/api/settings', JSON.stringify({
+      'wifi-static-ip': $('wifi-static-ip').value.trim(),
+      'wifi-gateway': $('wifi-gateway').value.trim(),
+      'wifi-dns': $('wifi-dns').value.trim(),
+    }));
+    log('Static IP settings sent', 'ok');
     if (apiKey)    { await postText('/api/api-key', apiKey);                  log('OpenAI キー送信', 'ok'); }
     if (geminiKey) { await postText('/api/gemini-api-key', geminiKey);        log('Gemini キー送信', 'ok'); }
     if ($('gemini-model') && $('gemini-model').value) {
@@ -2292,7 +2325,9 @@ refresh();
 // 手書きヒントのように陳腐化しない。BADGE_FIELDS = registry id → 対象コントロールの
 // DOM id。checkbox は toggle-label ごと、input/select はコントロール直後に置く。
 const BADGE_FIELDS = {
-  'ssid':'ssid', 'password':'password', 'provider':'provider',
+  'ssid':'ssid', 'password':'password',
+  'wifi-static-ip':'wifi-static-ip', 'wifi-gateway':'wifi-gateway', 'wifi-dns':'wifi-dns',
+  'provider':'provider',
   'operation-mode':'operation-mode', 'audio-output':'audio-output',
   'lip-sync-mode':'lip-sync-mode', 'led-mouth-sync':'led-mouth-sync',
   'barge-in':'barge-in-enabled', 'startup-arpeggio':'startup-arpeggio-enabled',
