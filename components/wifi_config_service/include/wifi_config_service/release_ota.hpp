@@ -18,6 +18,7 @@ enum class StartError {
     BadTag,            // tag missing / contains chars that don't belong in a URL
     UnknownBoard,      // g_board_kind not in {cores3, atoms3r, atoms3, stopwatch}
     WorkerSpawnFailed, // xTaskCreate failed (heap)
+    NoCatalog,         // CONFIG_STACKCHAN_UPDATE_BASE_URL is empty
 };
 
 // ADR-001: Main が拡張レイアウトで動くとき true にする。start() は自分で

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSL-1.0
 #include "agent_delegate.hpp"
 
+#include <config_service/product.hpp>
 #include <cstring>
 
 #include <cJSON.h>
@@ -44,14 +45,19 @@ conversation::ToolDefinition Delegate::tool_definition()
 {
     return conversation::ToolDefinition{
         .name = "ask_agent",
-        .description =
+        .description = config::tr(
+            "Ask a smarter home-server agent about things you cannot answer (search, math, "
+            "looking things up). It takes tens of seconds; say you will check and wait. "
+            "One request at a time.",
             "自分では分からないこと (最新情報の検索、計算、文章の下調べ、家のパソコンにある情報など) を、"
             "家のサーバーで動いている賢いエージェントに頼む。回答には数十秒かかるので、"
             "呼んだら「聞いてみるね」とだけ伝えて待つ。回答は後で自動的に届くので、届いたら要点を話す。"
-            "同時に頼めるのは 1 件。",
-        .parameters_json =
-            R"({"type":"object","properties":{"question":{"type":"string","maxLength":1000,)"
-            R"("description":"エージェントへの依頼内容。必要な前提も含めて日本語で具体的に"}},"required":["question"]})",
+            "同時に頼めるのは 1 件。"),
+        .parameters_json = config::ui_japanese()
+            ? R"({"type":"object","properties":{"question":{"type":"string","maxLength":1000,)"
+              R"("description":"エージェントへの依頼内容。必要な前提も含めて日本語で具体的に"}},"required":["question"]})"
+            : R"({"type":"object","properties":{"question":{"type":"string","maxLength":1000,)"
+              R"("description":"The request for the agent, including needed context"}},"required":["question"]})",
         .non_blocking = true,
     };
 }
@@ -154,13 +160,17 @@ std::optional<Result> Delegate::poll(std::uint32_t now_ms)
 
     if (now_ms - started_ms_ > kJobTimeoutMs) {
         ESP_LOGW(kTag, "job %s timed out", job_id_.c_str());
-        return finish(Result{.ok = false, .error = "エージェントからの回答が時間内に届きませんでした"});
+        return finish(Result{.ok = false,
+                             .error = config::tr("The agent did not answer in time",
+                                                 "エージェントからの回答が時間内に届きませんでした")});
     }
 
     int status = 0;
     const auto resp = http("GET", "/jobs/" + job_id_, "", status);
     if (!resp) return std::nullopt; // transient; retry next interval
-    if (status == 404) return finish(Result{.ok = false, .error = "エージェント サーバーが依頼を見失いました"});
+    if (status == 404) return finish(Result{.ok = false,
+                                            .error = config::tr("The agent server lost the request",
+                                                                "エージェント サーバーが依頼を見失いました")});
     if (status != 200) return std::nullopt;
 
     cJSON* root = cJSON_Parse(resp->c_str());

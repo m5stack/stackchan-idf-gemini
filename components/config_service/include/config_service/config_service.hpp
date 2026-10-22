@@ -116,6 +116,16 @@ struct DeviceConfig {
     std::string wifi_password;
     std::string openai_api_key;
     std::string gemini_api_key;
+    // Gemini Live model id and prebuilt voice name. Empty → Kconfig default
+    // (CONFIG_STACKCHAN_GEMINI_DEFAULT_MODEL / _VOICE). Staged; applied on
+    // the conversation reconnect after Apply.
+    std::string gemini_model;
+    std::string gemini_voice;
+    // UI / persona language: "en" or "ja". Empty follows the product default
+    // (English when CONFIG_STACKCHAN_GEMINI_ONLY, Japanese otherwise). Not
+    // exposed in any settings UI — kept as an NVS key so upstream can keep
+    // shipping Japanese without a schema break.
+    std::string lang;
     // XiaoZhi AI server: full WebSocket endpoint (ws://<host>:8000/xiaozhi/v1/)
     // and optional bearer token. Used only when provider == XiaoZhi; an empty
     // URL disables the conversation task for that provider.

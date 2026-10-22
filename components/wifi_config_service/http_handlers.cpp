@@ -11,8 +11,10 @@
 #include <config_service/config_service.hpp>
 #include <config_service/config_store.hpp>
 #include <config_service/ota.hpp>
+#include <config_service/product.hpp>
 #include <config_service/settings_registry.hpp>
 #include <config_service/staged_config.hpp>
+#include "update_url.hpp"
 #include <wifi_config_service/mcp_events.hpp>
 
 #include <algorithm>
@@ -506,7 +508,11 @@ esp_err_t handle_status_get(httpd_req_t* req)
     // Token itself is never returned; the UI only needs to know whether the
     // /mcp/* API is reachable (= has a token).
     body += "\"has_mcp_token\":" + std::string(has_mcp ? "true" : "false") + ",";
-    body += "\"provider\":" + std::to_string(static_cast<int>(cfg.provider)) + ",";
+    body += "\"provider\":" + std::to_string(static_cast<int>(config::effective_provider(cfg))) + ",";
+    body += "\"gemini_only\":" + std::string(config::gemini_only() ? "true" : "false") + ",";
+    body += "\"gemini_model\":\"" + escape_json(cfg.gemini_model) + "\",";
+    body += "\"gemini_voice\":\"" + escape_json(cfg.gemini_voice) + "\",";
+    body += "\"update_catalog\":" + std::string(update_catalog_configured() ? "true" : "false") + ",";
     body += "\"jtts_config\":\"" + escape_json(cfg.jtts_config_json) + "\",";
     body += "\"servo_limits\":\"" + escape_json(cfg.servo_limits_json) + "\",";
     body += "\"lt_config\":\"" + escape_json(cfg.lt_config_json) + "\",";
@@ -939,12 +945,37 @@ esp_err_t handle_provider_post(httpd_req_t* req)
     if (!require_auth(req)) return ESP_OK;
     std::string body;
     if (read_body_str(req, body, 8) != ESP_OK) return ESP_OK;
-    const int v = body.empty() ? 0 : (body[0] - '0');
-    config::Provider p = config::Provider::OpenAi;
-    if (v == static_cast<int>(config::Provider::Gemini)) p = config::Provider::Gemini;
-    else if (v == static_cast<int>(config::Provider::XiaoZhi)) p = config::Provider::XiaoZhi;
+    config::Provider p = config::Provider::Gemini;
+    if (!config::gemini_only()) {
+        const int v = body.empty() ? 0 : (body[0] - '0');
+        p = config::Provider::OpenAi;
+        if (v == static_cast<int>(config::Provider::Gemini)) p = config::Provider::Gemini;
+        else if (v == static_cast<int>(config::Provider::XiaoZhi)) p = config::Provider::XiaoZhi;
+    }
     xSemaphoreTake(g_mutex, portMAX_DELAY);
     g_staging.set_num("provider", static_cast<std::uint32_t>(p));
+    xSemaphoreGive(g_mutex);
+    return send_empty(req);
+}
+
+esp_err_t handle_gemini_model_post(httpd_req_t* req)
+{
+    if (!require_auth(req)) return ESP_OK;
+    std::string body;
+    if (read_body_str(req, body, 64) != ESP_OK) return ESP_OK;
+    xSemaphoreTake(g_mutex, portMAX_DELAY);
+    g_staging.set_str("gemini-model", std::move(body));
+    xSemaphoreGive(g_mutex);
+    return send_empty(req);
+}
+
+esp_err_t handle_gemini_voice_post(httpd_req_t* req)
+{
+    if (!require_auth(req)) return ESP_OK;
+    std::string body;
+    if (read_body_str(req, body, 32) != ESP_OK) return ESP_OK;
+    xSemaphoreTake(g_mutex, portMAX_DELAY);
+    g_staging.set_str("gemini-voice", std::move(body));
     xSemaphoreGive(g_mutex);
     return send_empty(req);
 }
@@ -1349,6 +1380,7 @@ esp_err_t handle_ota_release_post(httpd_req_t* req)
         case release_ota::StartError::BadTag:             msg = "bad tag";          break;
         case release_ota::StartError::UnknownBoard:       msg = "unknown board";    break;
         case release_ota::StartError::WorkerSpawnFailed:  msg = "spawn failed";     break;
+        case release_ota::StartError::NoCatalog:          msg = "update catalog unset"; break;
         }
         return send_error(req, "400 Bad Request", msg);
     }
@@ -2313,6 +2345,8 @@ void register_handlers(httpd_handle_t server, const config::DeviceConfig& curren
     add(server, "/api/mcp-token",       HTTP_POST, handle_mcp_token_post);
     add(server, "/api/lt-config",       HTTP_POST, handle_lt_config_post);
     add(server, "/api/provider",        HTTP_POST, handle_provider_post);
+    add(server, "/api/gemini-model",    HTTP_POST, handle_gemini_model_post);
+    add(server, "/api/gemini-voice",    HTTP_POST, handle_gemini_voice_post);
     add(server, "/api/jtts-config",     HTTP_POST, handle_jtts_config_post);
     add(server, "/api/servo-limits",    HTTP_POST, handle_servo_limits_post);
     add(server, "/api/servo-range-mode", HTTP_POST, handle_servo_range_mode_post);

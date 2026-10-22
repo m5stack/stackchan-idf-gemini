@@ -65,6 +65,10 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN=y
 CONFIG_MBEDTLS_HKDF_C=y
 CONFIG_MBEDTLS_HARDWARE_AES=y
 
+# Same catalog the main firmware uses so Recovery cannot fetch upstream
+# ciniml images onto a Gemini customer device.
+CONFIG_STACKCHAN_UPDATE_BASE_URL="https://m5stack.github.io/stackchan-idf-gemini"
+
 # --- HTTP server -------------------------------------------------------------
 # Chrome のヘッダは 1 KiB を超える (Main と同じ)。
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=4096

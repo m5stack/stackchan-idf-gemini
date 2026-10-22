@@ -90,6 +90,12 @@ html = html.replace(/\/\*\{\{SETTINGS_COMMON\}\}\*\//g, () => {
   return readFileSync(resolve(SCRIPT_DIR, '..', 'settings_common.js'), 'utf8');
 });
 
+let geminiHits = 0;
+html = html.replace(/\/\*\{\{GEMINI_UI\}\}\*\//g, () => {
+  ++geminiHits;
+  return readFileSync(resolve(SCRIPT_DIR, '..', 'gemini_ui.js'), 'utf8');
+});
+
 if (bundleHits === 0) {
   process.stderr.write(`warning: ${templatePath}: no '/*{{AVATAR_DSL_BUNDLE}}*/' placeholder found\n`);
 }
@@ -102,4 +108,5 @@ process.stdout.write(
   `[avatar_dsl] injected bundle (${bundle.length}B) + ${presets.length} preset(s) ` +
   `(${presets.map((p) => p.name).join(', ')})` +
   (commonHits > 0 ? ' + settings_common.js' : '') +
+  (geminiHits > 0 ? ' + gemini_ui.js' : '') +
   ` into ${templatePath} -> ${outPath}\n`);

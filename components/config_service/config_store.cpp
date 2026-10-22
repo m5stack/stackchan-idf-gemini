@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: BSL-1.0
 
 #include <config_service/config_store.hpp>
+#include <config_service/product.hpp>
 #include <config_service/settings_registry.hpp>
+
+#include "sdkconfig.h"
 
 #include <cstdint>
 #include <cstring>
@@ -128,16 +131,36 @@ tl::expected<void, Error> save_rows(std::initializer_list<const char*> ids,
     return {};
 }
 
+void apply_product_defaults(DeviceConfig& cfg)
+{
+    if (gemini_only()) {
+        cfg.provider = Provider::Gemini;
+    }
+    if (cfg.gemini_model.empty()) {
+        cfg.gemini_model = default_gemini_model();
+    }
+    if (cfg.gemini_voice.empty()) {
+        cfg.gemini_voice = default_gemini_voice();
+    }
+    set_ui_lang(cfg.lang);
+}
+
 } // namespace
 
 DeviceConfig load()
 {
     nvs_handle_t h;
     esp_err_t err = nvs_open(kNs, NVS_READONLY, &h);
-    if (err == ESP_ERR_NVS_NOT_FOUND) return {};
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        DeviceConfig cfg;
+        apply_product_defaults(cfg);
+        return cfg;
+    }
     if (err != ESP_OK) {
         ESP_LOGW(kTag, "nvs_open(RO): %s", esp_err_to_name(err));
-        return {};
+        DeviceConfig cfg;
+        apply_product_defaults(cfg);
+        return cfg;
     }
     DeviceConfig cfg;
     for (const auto& d : registry::table()) {
@@ -161,6 +184,7 @@ DeviceConfig load()
         }
     }
     nvs_close(h);
+    apply_product_defaults(cfg);
     return cfg;
 }
 

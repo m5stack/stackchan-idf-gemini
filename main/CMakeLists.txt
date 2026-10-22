@@ -41,6 +41,7 @@ set(_main_srcs
     "atom_status.cpp"
     "audio_codec.cpp"
     "battery.cpp"
+    "boot_splash.cpp"
     "camera_service.cpp"
     "dance.cpp"
     "dance_storage.cpp"
@@ -91,6 +92,12 @@ idf_component_register(
     PRIV_REQUIRES ${_main_priv_reqs}
 )
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_20)
+
+if(CONFIG_STACKCHAN_BOOT_SPLASH)
+    target_add_binary_data(${COMPONENT_LIB} "${PROJECT_DIR}/assets/splash/splash_cores3.png" BINARY)
+    target_add_binary_data(${COMPONENT_LIB} "${PROJECT_DIR}/assets/splash/splash_atom.png" BINARY)
+    target_add_binary_data(${COMPONENT_LIB} "${PROJECT_DIR}/assets/splash/splash_stopwatch.png" BINARY)
+endif()
 
 # --- ADR-001: exttab / bootctl の生成と書き込み (partitions_main_*.csv のとき) --
 # 開発時の `make flash` で Main と一緒に拡張テーブルと「起動先=Main (確認済み)」の

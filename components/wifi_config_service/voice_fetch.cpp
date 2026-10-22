@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSL-1.0
 
 #include "voice_fetch.hpp"
+#include "update_url.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -45,10 +46,11 @@ bool id_looks_safe(const std::string& id) {
 const char* fetch_and_install(const std::string& voice_id, const InstallFn& install) {
     if (!id_looks_safe(voice_id)) return "bad voice id";
 
+    if (!update_catalog_configured()) return "update catalog unset";
     char url[256];
-    std::snprintf(url, sizeof(url),
-                  "https://ciniml.github.io/stackchan-idf/voices/%s.htsvoice",
-                  voice_id.c_str());
+    char path[80];
+    std::snprintf(path, sizeof(path), "voices/%s.htsvoice", voice_id.c_str());
+    format_update_url(url, sizeof(url), path);
     ESP_LOGI(kTag, "GET %s", url);
 
     esp_http_client_config_t cfg{};
@@ -113,8 +115,11 @@ const char* fetch_and_install(const std::string& voice_id, const InstallFn& inst
 }
 
 bool fetch_manifest(std::string& out) {
+    if (!update_catalog_configured()) return false;
+    char url[256];
+    format_update_url(url, sizeof(url), "voices.json");
     esp_http_client_config_t cfg{};
-    cfg.url = "https://ciniml.github.io/stackchan-idf/voices.json";
+    cfg.url = url;
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
     cfg.timeout_ms = 15000;
     cfg.keep_alive_enable = false;

@@ -5,6 +5,7 @@
 #include <config_service/config_store.hpp>
 #include <config_service/crypto.hpp>
 #include <config_service/ota.hpp>
+#include <config_service/product.hpp>
 #include <config_service/staged_config.hpp>
 #include <avatar_vm/storage.hpp>
 
@@ -150,6 +151,15 @@ static const ble_uuid128_t kAudioDataUuid = BLE_UUID128_INIT(
 static const ble_uuid128_t kAudioCreditUuid = BLE_UUID128_INIT(
     0x00, 0x1f, 0x4b, 0x8d, 0x5a, 0x2c, 0x6f, 0x9e,
     0x2a, 0x4d, 0x1c, 0x7b, 0x10, 0xa0, 0xf0, 0xe3);
+// GeminiModel / GeminiVoice — encrypted strings for the Live API model id
+// and prebuilt voice. Appended UUIDs (0x32 / 0x33); missing on older
+// firmware, so the web UI probes and hides the fields when absent.
+static const ble_uuid128_t kGeminiModelUuid = BLE_UUID128_INIT(
+    0x00, 0x1f, 0x4b, 0x8d, 0x5a, 0x2c, 0x6f, 0x9e,
+    0x2a, 0x4d, 0x1c, 0x7b, 0x32, 0xa0, 0xf0, 0xe3);
+static const ble_uuid128_t kGeminiVoiceUuid = BLE_UUID128_INIT(
+    0x00, 0x1f, 0x4b, 0x8d, 0x5a, 0x2c, 0x6f, 0x9e,
+    0x2a, 0x4d, 0x1c, 0x7b, 0x33, 0xa0, 0xf0, 0xe3);
 // XiaoZhiUrl — encrypted string, the full WebSocket endpoint of a XiaoZhi AI
 // server ("ws://<host>:8000/xiaozhi/v1/"). Used only when provider == XiaoZhi.
 static const ble_uuid128_t kXiaozhiUrlUuid = BLE_UUID128_INIT(
@@ -466,6 +476,8 @@ static uint16_t g_ota_ctrl_handle = 0;
 static uint16_t g_ota_data_handle = 0;
 static uint16_t g_provider_handle = 0;
 static uint16_t g_gemini_key_handle = 0;
+static uint16_t g_gemini_model_handle = 0;
+static uint16_t g_gemini_voice_handle = 0;
 static uint16_t g_xiaozhi_url_handle = 0;
 static uint16_t g_xiaozhi_token_handle = 0;
 static uint16_t g_face_config_handle = 0;
@@ -528,7 +540,8 @@ std::array<uint8_t, 2> compute_status_locked()
     if (!g_active.openai_api_key.empty()) flags |= 0x04;
     if (g_active.openai_enabled) flags |= 0x08;
     if (!g_active.gemini_api_key.empty()) flags |= 0x10;
-    if (g_active.provider == Provider::Gemini) flags |= 0x20;
+    if (effective_provider(g_active) == Provider::Gemini) flags |= 0x20;
+    if (gemini_only()) flags |= 0x40;
     return {flags, g_wifi_connected ? uint8_t{1} : uint8_t{0}};
 }
 
@@ -882,8 +895,32 @@ static int gatt_access_cb(uint16_t /*conn_handle*/, uint16_t attr_handle,
                 xSemaphoreGive(g_mutex);
                 return BLE_ATT_ERR_UNLIKELY;
             }
-            const std::uint8_t byte = static_cast<std::uint8_t>(g_active.provider);
+            const std::uint8_t byte = static_cast<std::uint8_t>(effective_provider(g_active));
             const bool ok = append_encrypted(ctxt->om, {&byte, 1});
+            xSemaphoreGive(g_mutex);
+            return ok ? 0 : BLE_ATT_ERR_UNLIKELY;
+        }
+        if (attr_handle == g_gemini_model_handle) {
+            xSemaphoreTake(g_mutex, portMAX_DELAY);
+            if (!g_session.is_established()) {
+                xSemaphoreGive(g_mutex);
+                return BLE_ATT_ERR_UNLIKELY;
+            }
+            const std::string val = g_active.gemini_model;
+            const bool ok = append_encrypted(
+                ctxt->om, {reinterpret_cast<const std::uint8_t*>(val.data()), val.size()});
+            xSemaphoreGive(g_mutex);
+            return ok ? 0 : BLE_ATT_ERR_UNLIKELY;
+        }
+        if (attr_handle == g_gemini_voice_handle) {
+            xSemaphoreTake(g_mutex, portMAX_DELAY);
+            if (!g_session.is_established()) {
+                xSemaphoreGive(g_mutex);
+                return BLE_ATT_ERR_UNLIKELY;
+            }
+            const std::string val = g_active.gemini_voice;
+            const bool ok = append_encrypted(
+                ctxt->om, {reinterpret_cast<const std::uint8_t*>(val.data()), val.size()});
             xSemaphoreGive(g_mutex);
             return ok ? 0 : BLE_ATT_ERR_UNLIKELY;
         }
@@ -1439,11 +1476,34 @@ static int gatt_access_cb(uint16_t /*conn_handle*/, uint16_t attr_handle,
         }
         if (attr_handle == g_provider_handle) {
             if (pt.size() != 1) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+            if (gemini_only()) {
+                // Ignore OpenAI / XiaoZhi writes; keep the staged value Gemini.
+                xSemaphoreTake(g_mutex, portMAX_DELAY);
+                g_staging.set_num("provider", static_cast<std::uint32_t>(Provider::Gemini));
+                xSemaphoreGive(g_mutex);
+                return 0;
+            }
             Provider p = Provider::OpenAi;
             if (pt[0] == static_cast<std::uint8_t>(Provider::Gemini)) p = Provider::Gemini;
             else if (pt[0] == static_cast<std::uint8_t>(Provider::XiaoZhi)) p = Provider::XiaoZhi;
             xSemaphoreTake(g_mutex, portMAX_DELAY);
             g_staging.set_num("provider", static_cast<std::uint32_t>(p));
+            xSemaphoreGive(g_mutex);
+            return 0;
+        }
+        if (attr_handle == g_gemini_model_handle) {
+            if (pt.size() > 64) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+            std::string val(reinterpret_cast<const char*>(pt.data()), pt.size());
+            xSemaphoreTake(g_mutex, portMAX_DELAY);
+            g_staging.set_str("gemini-model", std::move(val));
+            xSemaphoreGive(g_mutex);
+            return 0;
+        }
+        if (attr_handle == g_gemini_voice_handle) {
+            if (pt.size() > 32) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+            std::string val(reinterpret_cast<const char*>(pt.data()), pt.size());
+            xSemaphoreTake(g_mutex, portMAX_DELAY);
+            g_staging.set_str("gemini-voice", std::move(val));
             xSemaphoreGive(g_mutex);
             return 0;
         }
@@ -2060,6 +2120,18 @@ static ble_gatt_chr_def kChrs[] = {
         // writes (see the kAudioCreditUuid comment).
         .flags = BLE_GATT_CHR_F_READ,
         .val_handle = &g_audio_credit_handle,
+    },
+    {
+        .uuid = &kGeminiModelUuid.u,
+        .access_cb = gatt_access_cb,
+        .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+        .val_handle = &g_gemini_model_handle,
+    },
+    {
+        .uuid = &kGeminiVoiceUuid.u,
+        .access_cb = gatt_access_cb,
+        .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+        .val_handle = &g_gemini_voice_handle,
     },
     {} // terminator: uuid = nullptr
 };

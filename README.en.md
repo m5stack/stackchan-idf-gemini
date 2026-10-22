@@ -1,17 +1,18 @@
 [日本語](README.md)
 
-# stackchan-idf
+# stackchan-idf (Gemini edition)
 
 Firmware for Stack-chan running on M5Stack CoreS3 / AtomS3R / AtomS3 / StopWatch (C152),
-written against ESP-IDF 5.5 / C++20. Supports AI voice conversation (OpenAI / Gemini /
-XiaoZhi), three configuration paths (BLE / Wi-Fi STA / SoftAP), and device-side OTA.
+written against ESP-IDF 5.5 / C++20. This fork is a **Google Gemini Live–only**
+customer build (OpenAI / XiaoZhi source stays in the tree but is hidden and locked
+out at runtime). Default UI and conversation language are English.
 
 ## Web Flasher / Settings page
 
 Released firmware can be flashed straight from the browser (Chrome / Edge):
 
-- **Flash**: <https://ciniml.github.io/stackchan-idf/>
-- **BLE Settings**: <https://ciniml.github.io/stackchan-idf/settings.html> (Web Bluetooth, desktop Chrome / Edge only)
+- **Flash**: <https://m5stack.github.io/stackchan-idf-gemini/>
+- **BLE Settings**: <https://m5stack.github.io/stackchan-idf-gemini/settings.html> (Web Bluetooth, desktop Chrome / Edge only)
 - **Wi-Fi Settings**: once the device is on Wi-Fi, `http://stackchan-XXXXXX.local/` (mDNS)
 - **iOS / SoftAP Settings**: trigger AP mode on-device (per-board, see below), scan the
   Wi-Fi QR shown on the LCD with iPhone Camera → join → captive portal pops the
@@ -36,14 +37,15 @@ appropriately.
 
 ## Features
 
-- **AI voice conversation**: WebSocket to one of OpenAI Realtime / Google Gemini
-  Live / a XiaoZhi server, streaming mic input → reply audio with mouth-sync.
-  The half-duplex CoreS3 mutes the mic while speaking; interrupt a reply
-  (barge-in) with an LCD tap or a head touch (Si12T). Turns are detected by
-  server-side VAD. OpenAI / Gemini drive expression, head pose and robotic
-  speech via tools (`set_expression` / `set_head_pose` / `speak_katakoto`);
-  XiaoZhi maps its reply emotion to an expression. Reply text streams into
-  the balloon.
+- **AI voice conversation (Gemini Live only)**: WebSocket to Google Gemini Live.
+  Auth is an AI Studio API key only (ships empty; enter it from BLE / Wi-Fi
+  settings). Default model `gemini-3.8-live`, default voice Aoede (both
+  configurable). Mic input → reply audio with mouth-sync. The half-duplex
+  CoreS3 mutes the mic while speaking; interrupt a reply (barge-in) with an
+  LCD tap or a head touch (Si12T). Turns are detected by server-side VAD.
+  Tools (`set_expression` / `set_head_pose`) drive expression and head pose.
+  The Japanese-only `speak_katakoto` tool is hidden from the model in English
+  mode. Set the persona yourself on the settings page system-prompt field.
 - **Avatar rendering**: 30 fps with M5GFX. Breath / saccade / blink animators,
   six expressions (Neutral / Happy / Sad / Angry / Doubt / Sleepy). The face
   layout and animation is driven by an **Avatar DSL** (`.avdsl` source →
@@ -66,16 +68,22 @@ appropriately.
     (info / settings / control / range / conversation / LT)
   - AtomS3R / AtomS3 (button only): BtnA short-press toggles the status
     overlay, long-press cycles `operation_mode`
-- **Speech balloon**: 24 px Japanese-capable Gothic font on a rounded white
-  panel; long text scrolls right-to-left as a marquee.
+- **Boot splash**: Google Cloud logo on the LCD right after board init
+  (CoreS3 320×240 / Atom 128×128 / StopWatch 466×466, kept inside the
+  inscribed circle on the round panel). Shown for at least ~2 s until the
+  face render task takes over.
+- **Speech balloon**: 24 px Gothic font on a rounded white panel; long text
+  scrolls right-to-left as a marquee. Default balloon / on-device UI strings
+  are English (NVS `lang` can restore Japanese; there is no language switcher).
 - **BLE settings service** (NimBLE GATT): configure Wi-Fi, API keys and OTA
   from `tools/settings.html` (Web Bluetooth). Bluetooth 4.2+ Just Works
   pairing plus an application-layer X25519 + AES-256-GCM session, with
   optional password auth. Settings land in NVS; Apply reboots.
 - **Wi-Fi settings service**: once Wi-Fi connects, the device serves an HTTP
   server (port 80) + a built-in `settings_wifi.html`, advertised over mDNS
-  (`stackchan-XXXXXX.local`). Covers SSID, provider, API keys, system prompt,
-  extra HTTP headers, jtts, Avatar DSL, OTA — everything the BLE page covers.
+  (`stackchan-XXXXXX.local`). Covers SSID, Gemini API key, model, voice, system
+  prompt, extra HTTP headers, jtts, Avatar DSL, OTA. Pages are in English;
+  OpenAI / XiaoZhi fields are hidden.
 - **SoftAP provisioning (iOS-friendly)**: when STA is unset / failing, trigger
   AP mode on-device (`Stackchan-XXXXXX` + WPA2). LCD shows a Wi-Fi QR; the
   iPhone Camera scans → joins → **the captive portal automatically opens
@@ -85,8 +93,9 @@ appropriately.
   - **BLE**: settings.html → encrypted chunks
   - **Wi-Fi local file**: upload a `.bin` from settings_wifi.html
   - **Wi-Fi device-side fetch** (v0.7.4+): `POST /api/ota/release {tag}` —
-    the device pulls its own per-board binary from GitHub Pages over its
-    STA link and applies it (STA must be up).
+    the device pulls its own per-board binary from this repo's GitHub Pages
+    (`https://m5stack.github.io/stackchan-idf-gemini`) over STA. It will not
+    fetch upstream ciniml firmware.
 
 ## Hardware (CoreS3 + Stack-chan base path)
 

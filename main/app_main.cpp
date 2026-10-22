@@ -71,6 +71,8 @@
 #include "wifi_audio.hpp"
 #endif
 #include "wifi_sta.hpp"
+#include "boot_splash.hpp"
+#include <config_service/product.hpp>
 
 #include <jtts/jtts.hpp>
 #ifdef CONFIG_TELEGRAM_PHASE1_ENABLED
@@ -282,6 +284,7 @@ extern "C" void app_main()
     // kind (the Module Audio probe below) are folded into this local copy in
     // one place; everything downstream reads the profile, not board.kind().
     stackchan::board::BoardProfile profile = stackchan::board::profile_for(board.kind());
+    stackchan::app::boot_splash::show(board.display(), profile.circular_display);
 
     // Reserve the conversation task's internal-RAM speaker ring *now*, before
     // anything else has a chance to chew up DRAM. The conversation task itself
@@ -727,6 +730,7 @@ extern "C" void app_main()
             case StartError::BadTag:            return "bad tag";
             case StartError::UnknownBoard:      return "unknown board";
             case StartError::WorkerSpawnFailed: return "spawn failed";
+            case StartError::NoCatalog:         return "update catalog unset";
             }
             return "fetch failed";
         });
@@ -912,7 +916,7 @@ extern "C" void app_main()
     const char* xiaozhi_token = "";
     if (!cfg.openai_enabled) {
         ESP_LOGI(kTag, "Conversation disabled by configuration");
-    } else if (cfg.provider == stackchan::config::Provider::Gemini) {
+    } else if (stackchan::config::effective_provider(cfg) == stackchan::config::Provider::Gemini) {
         if (!cfg.gemini_api_key.empty()) {
             api_key = cfg.gemini_api_key.c_str();
         }
@@ -936,12 +940,15 @@ extern "C" void app_main()
 
 #if CONFIG_STACKCHAN_CONVERSATION_ENABLED
     g_conversation_args = new stackchan::app::ConversationTaskArgs{
-        .state = g_state, .api_key = api_key, .provider = cfg.provider, .touch = head_touch,
+        .state = g_state, .api_key = api_key,
+        .provider = stackchan::config::effective_provider(cfg), .touch = head_touch,
         .xiaozhi_url = xiaozhi_url, .xiaozhi_token = xiaozhi_token,
         .system_prompt = cfg.system_prompt.c_str(),
         .extra_headers = cfg.conv_extra_headers.c_str(),
         .agent_url = cfg.agent_url.c_str(),
         .agent_token = cfg.agent_token.c_str(),
+        .gemini_model = cfg.gemini_model.c_str(),
+        .gemini_voice = cfg.gemini_voice.c_str(),
         .seg_buf = g_conv_seg_buf};
 #else
     (void)api_key; (void)xiaozhi_url; (void)xiaozhi_token;
@@ -952,6 +959,7 @@ extern "C" void app_main()
     // profile.button_overlay_ui decides). render_task and demo_loop
     // dispatch through screens:: from here on.
     stackchan::app::diag_heap("pre-screens/render");
+    stackchan::app::boot_splash::wait_min_time();
     stackchan::app::screens::init(board.display(), *g_state, profile);
     stackchan::app::start_render_task(*g_render_args);
     if (!no_servo_bus && cfg.servo_enabled && g_servo_args != nullptr) {

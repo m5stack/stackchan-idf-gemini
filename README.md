@@ -1,17 +1,18 @@
 [English](README.en.md)
 
-# stackchan-idf
+# stackchan-idf (Gemini edition)
 
 M5Stack の CoreS3 / AtomS3R / AtomS3 / StopWatch (C152) で動く Stack-chan ファームウェア。
-ESP-IDF 5.5 / C++20。AI 音声対話 (OpenAI / Gemini / XiaoZhi)、BLE / Wi-Fi / SoftAP の 3 経路
-設定、デバイス側 OTA をサポートします。
+ESP-IDF 5.5 / C++20。このフォークは **Google Gemini Live 専用** の顧客向けビルドです
+(上流 ciniml/stackchan-idf の OpenAI / XiaoZhi コードは残していますが、設定画面と実行時
+プロバイダは Gemini に固定)。既定の UI / 会話言語は英語です。
 
 ## Web Flasher / 設定ページ
 
 GitHub Releases に置かれたファームウェアをブラウザから書き込めます (Chrome / Edge):
 
-- **書き込み**: <https://ciniml.github.io/stackchan-idf/>
-- **BLE 設定**: <https://ciniml.github.io/stackchan-idf/settings.html> (Web Bluetooth、デスクトップ Chrome / Edge のみ)
+- **書き込み**: <https://m5stack.github.io/stackchan-idf-gemini/>
+- **BLE 設定**: <https://m5stack.github.io/stackchan-idf-gemini/settings.html> (Web Bluetooth、デスクトップ Chrome / Edge のみ)
 - **Wi-Fi 設定**: デバイスを Wi-Fi に繋いだ後 `http://stackchan-XXXXXX.local/` (mDNS)
 - **iOS / SoftAP 設定**: 本体ボタン (boards により方法が異なる、後述) で AP モードに入り、
   LCD に表示される Wi-Fi QR を iPhone Camera で読む → captive portal で設定ページが自動表示
@@ -34,19 +35,20 @@ Pages サイトに反映されます。
 
 ## 機能
 
-- **AI 音声対話**: OpenAI Realtime / Google Gemini Live / XiaoZhi サーバーに WebSocket
-  接続。マイク入力 → 応答音声 → 口パク連動。半二重 CoreS3 では発話中マイクを止め、
-  応答中は LCD タップ / 頭タッチ (Si12T) で barge-in 可能。サーバー側 VAD で
-  ターン検出。OpenAI / Gemini ではツール (`set_expression` / `set_head_pose` /
-  `speak_katakoto`) で表情・首振り・カタコト声を制御 (XiaoZhi では MCP 経由。加えて感情を表情にマップ)。
+- **AI 音声対話 (Gemini Live のみ)**: Google Gemini Live に WebSocket 接続。
+  認証は AI Studio API キーのみ (出荷時は空。BLE / Wi-Fi 設定から入力)。既定モデルは
+  `gemini-3.8-live`、既定ボイスは Aoede (いずれも設定ページで変更可)。マイク入力 →
+  応答音声 → 口パク連動。半二重 CoreS3 では発話中マイクを止め、応答中は LCD タップ /
+  頭タッチ (Si12T) で barge-in 可能。サーバー側 VAD でターン検出。ツール
+  (`set_expression` / `set_head_pose`) で表情・首振りを制御。日本語専用の
+  `speak_katakoto` は英語モードではモデルに公開しません。人格 (システム プロンプト)
+  は設定ページの「システム プロンプト」で変更できます。
   システム プロンプト (組み込み、または設定ページの「システム プロンプト」) は OpenAI / Gemini に
   加えて XiaoZhi にも接続時に送ります (公式サーバーは無視。自前の XiaoZhi サーバーで受け取る改造を
   入れると、サーバー側の人格設定の代わりに機体の人格で話します)。
   応答テキストは吹き出しに進行表示。会話の進み具合は画面右上のバッジに出ます
   (待受中 → 聞き取り中 → 応答待ち → ツール実行中 / エージェント待ち → 応答中、接続中 / 再接続中 / 接続エラー)。
-- **会話中のお手伝いツール** (OpenAI / Gemini / XiaoZhi): 話しかけるだけで次のことができます
-  (XiaoZhi では機体が MCP サーバーとしてツールを公開し、サーバー側の LLM が呼びます。
-  サーバーの Intent 設定が function_call である必要があります)。
+- **会話中のお手伝いツール** (Gemini Live): 話しかけるだけで次のことができます。
   - 「いま何時？」→ 機体の時計 (Wi-Fi 接続時に自動で合う) で答えます
   - 「電池どれくらい？」「近くに手ある？」→ 電池残量・近接センサー・稼働時間・LT
     タイマー残りを答えます
@@ -99,14 +101,19 @@ Pages サイトに反映されます。
     操作 / 範囲 / 会話 / LT)
   - AtomS3R / AtomS3 (button only): BtnA 短押でステータス オーバーレイ、長押で
     operation_mode サイクル
+- **起動スプラッシュ**: 起動直後に Google Cloud ロゴを LCD に表示 (CoreS3 320×240 /
+  Atom 128×128 / StopWatch 466×466。円形パネルは内接円の内側に収める)。最短約 2 秒、
+  顔描画タスクが始まるまで。
 - **吹き出し**: 24 px ゴシック フォントの白パネル、長文は marquee スクロール。
+  既定の吹き出し・本体 UI は英語 (NVS `lang` で日本語に戻せますが、言語切替 UI はありません)。
 - **BLE 設定サービス** (NimBLE GATT): `tools/settings.html` (Web Bluetooth) から
   Wi-Fi 接続先・API キー・各種設定・OTA 更新。Bluetooth 4.2 以降の Just Works
   ペアリング + アプリケーション層 X25519 + AES-256-GCM 暗号化、optional password 認証。
   設定は NVS に保存、Apply で再起動して反映。
 - **Wi-Fi 設定サービス**: 接続後 HTTP サーバー (port 80) + `settings_wifi.html`、
-  mDNS (`stackchan-XXXXXX.local`)。SSID / プロバイダ / API キー / システム
-  プロンプト / 追加 HTTP ヘッダ / jtts / Avatar DSL / OTA 全て対応。
+  mDNS (`stackchan-XXXXXX.local`)。SSID / Gemini API キー / モデル / ボイス /
+  システム プロンプト / 追加 HTTP ヘッダ / jtts / Avatar DSL / OTA 全て対応。
+  設定ページは英語表示。OpenAI / XiaoZhi の入力欄は出しません。
 - **SoftAP プロビジョニング (iOS フレンドリー)**: STA が未設定 / 接続失敗時に
   本体トリガで AP モード起動 (`Stackchan-XXXXXX` + WPA2)。LCD に Wi-Fi QR 表示、
   iPhone Camera スキャン → 接続 → **captive portal が自動で `settings_wifi.html` を開く**
@@ -116,7 +123,9 @@ Pages サイトに反映されます。
   - **BLE 経由**: settings.html → 暗号化された chunk
   - **Wi-Fi ローカル ファイル**: settings_wifi.html で `.bin` をアップロード
   - **Wi-Fi デバイス側 fetch** (v0.7.4+): `POST /api/ota/release {tag}` で device
-    自身が GitHub Pages から自分のボード用バイナリをダウンロード → 適用 (STA 必要)
+    自身がこのリポジトリの GitHub Pages
+    (`https://m5stack.github.io/stackchan-idf-gemini`) から自分のボード用バイナリを
+    ダウンロード → 適用 (STA 必要)。上流 ciniml のファームは取得しません。
   - **リリース チャンネル** (v0.15+): tag は `vX.Y.Z` (正式) / `vX.Y.Z-rc.N` /
     `vX.Y.Z-beta.N` / `vX.Y.Z-alpha.N` (alpha は CoreS3 / AtomS3R のみ)。Web Flasher と
     設定ページの「チャンネル」で表示範囲を選ぶ (既定は正式のみ)。`?channel=alpha` で
@@ -131,9 +140,9 @@ Pages サイトに反映されます。
 
 | 機能 | マイク口パク<br>(MicLipSync) | JTTS ランダム発話<br>(JttsRandom) | 会話応答<br>(Conversation) | ローカル音声認識<br>(AsrLocal) | ESP-NOW リモコン / 姿勢配信<br>(EspNowRemote / Sender) |
 |---|:-:|:-:|:-:|:-:|:-:|
-| AI 音声対話 (OpenAI / Gemini / XiaoZhi) | × | × | ○ | × | × |
-| 会話中のお手伝いツール (時刻 / 状態 / 記憶 / タイマー) | × | × | ○ (OpenAI / Gemini / XiaoZhi=MCP) | × | × |
-| エージェントへの依頼 (ask_agent、家の PC の Claude Code) | × | × | ○ (OpenAI / Gemini は機体から直接、XiaoZhi はサーバー側で実行。エージェント サーバー URL 設定時) | × | × |
+| AI 音声対話 (Gemini Live) | × | × | ○ | × | × |
+| 会話中のお手伝いツール (時刻 / 状態 / 記憶 / タイマー) | × | × | ○ | × | × |
+| エージェントへの依頼 (ask_agent、家の PC の Claude Code) | × | × | ○ (エージェント サーバー URL 設定時) | × | × |
 | jtts ランダム発話 (独り言) | × | ○ | × | × | × |
 | マイク連動口パク (lip sync) | ○ | × | × | × (マイクは ASR が占有) | × |
 | ウェイクワード (esp-sr WakeNet) | × | × | × | ○ | × |
@@ -200,13 +209,13 @@ make monitor   BOARD=cores3 PORT=/dev/ttyACM0
 `RTC_PowerHub_Class::setAlarmIRQ` で GCC 14 の `-Werror=maybe-uninitialized`
 に引っかかる `buf` 初期化を当てるだけです。
 
-OpenAI / Gemini の API キーはビルドに埋め込まず、BLE / Wi-Fi 設定 IF から
-実行時に投入します (NVS に保存)。`sdkconfig.defaults.local` (gitignore 済み) で
-コンパイル時デフォルトを与えることもできます。
+Gemini API キーはビルドに埋め込まず、BLE / Wi-Fi 設定 IF から実行時に投入します
+(NVS に保存)。モデル名とボイスも同じ画面で変えられます。
+`sdkconfig.defaults.local` (gitignore 済み) でコンパイル時デフォルトを与えることもできます。
 
 ## 起動シーケンス (CoreS3 標準パス)
 
-1. M5 / Avatar 初期化、起動音 (C5–E5–G5 アルペジオ、設定で OFF 可)
+1. M5 初期化 → Google Cloud 起動ロゴ (最短約 2 秒) → Avatar 初期化、起動音 (C5–E5–G5 アルペジオ、設定で OFF 可)
 2. NVS から設定読み込み → BLE 設定サービス起動 (常時 advertising)
 3. SSID があれば Wi-Fi STA 接続を非ブロッキング開始
    - STA 接続後 → mDNS + HTTP 設定サーバー + SNTP 開始
@@ -270,4 +279,4 @@ HMM 音声合成に使う **hts_engine API** (Modified BSD / 名古屋工業大�
 Project Team) をはじめとする第三者コンポーネントの帰属表示は
 **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)** にまとめています。
 HTML 版 (Web フラッシャー・設定ページからも参照可):
-<https://ciniml.github.io/stackchan-idf/licenses.html>。
+<https://m5stack.github.io/stackchan-idf-gemini/licenses.html>。

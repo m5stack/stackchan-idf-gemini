@@ -3,6 +3,7 @@
 
 #include <config_service/config_service.hpp>
 #include <config_service/config_store.hpp>
+#include <config_service/product.hpp>
 #include "dis.hpp"
 #include "gatt_settings.hpp"
 
@@ -12,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iterator>
+#include <string_view>
 
 #include <esp_log.h>
 #include <esp_mac.h>
@@ -35,16 +37,53 @@ extern "C" void ble_store_config_init(void);
 
 namespace stackchan::config {
 
+namespace {
+bool g_ui_japanese =
+#ifdef CONFIG_STACKCHAN_GEMINI_ONLY
+    false;
+#else
+    true;
+#endif
+} // namespace
+
+void set_ui_lang(std::string_view nvs_lang)
+{
+    if (nvs_lang == "ja") {
+        g_ui_japanese = true;
+    } else if (nvs_lang == "en") {
+        g_ui_japanese = false;
+    } else {
+        // Empty / unknown: product default.
+        g_ui_japanese = !gemini_only();
+    }
+}
+
+bool ui_japanese()
+{
+    return g_ui_japanese;
+}
+
 // --- OperationMode 表示・選択ヘルパ (単一の情報源) -----------------------
 const char* operation_mode_label(OperationMode m)
 {
+    if (g_ui_japanese) {
+        switch (m) {
+        case OperationMode::MicLipSync:   return "マイクリップシンク";
+        case OperationMode::JttsRandom:   return "JTTSランダム発話";
+        case OperationMode::Conversation: return "会話応答";
+        case OperationMode::AsrLocal:     return "ローカル音声認識";
+        case OperationMode::EspNowRemote: return "ESP-NOWリモコン";
+        case OperationMode::EspNowSender: return "ESP-NOW姿勢配信";
+        }
+        return "?";
+    }
     switch (m) {
-    case OperationMode::MicLipSync:   return "マイクリップシンク";
-    case OperationMode::JttsRandom:   return "JTTSランダム発話";
-    case OperationMode::Conversation: return "会話応答";
-    case OperationMode::AsrLocal:     return "ローカル音声認識";
-    case OperationMode::EspNowRemote: return "ESP-NOWリモコン";
-    case OperationMode::EspNowSender: return "ESP-NOW姿勢配信";
+    case OperationMode::MicLipSync:   return "Mic lip sync";
+    case OperationMode::JttsRandom:   return "JTTS random speech";
+    case OperationMode::Conversation: return "Conversation";
+    case OperationMode::AsrLocal:     return "On-device ASR";
+    case OperationMode::EspNowRemote: return "ESP-NOW remote";
+    case OperationMode::EspNowSender: return "ESP-NOW pose send";
     }
     return "?";
 }

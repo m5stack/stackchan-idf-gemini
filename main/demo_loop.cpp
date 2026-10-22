@@ -20,6 +20,7 @@
 #include <wifi_config_service/mcp_events.hpp>
 #include <wifi_config_service/wifi_config_service.hpp>
 #include "config_service/config_service.hpp"
+#include "config_service/product.hpp"
 
 #include "avatar/expression.hpp"
 #include "battery.hpp"
@@ -407,11 +408,11 @@ constexpr const char* kTag = "stackchan";
                 g_state->face.expression.store(static_cast<int>(avatar::Expression::Happy),
                                                std::memory_order_relaxed);
                 g_state->set_balloon_text(rem_display, /*hold_ms=*/6000);
-                if (allow_full_demo) {
+                if (allow_full_demo && config::ui_japanese() && !rem_reading.empty()) {
                     speech.stop();
                     (void)speech.say(decode_utf8(rem_reading));
                     next_speech_ms = std::max(next_speech_ms, now_ms + 8000);
-                } else {
+                } else if (!allow_full_demo) {
                     // Conversation owns the speaker: let the assistant say it.
                     g_state->post_notice(rem_display);
                 }
@@ -449,7 +450,8 @@ constexpr const char* kTag = "stackchan";
                 if (!wifi_ok && !wifi_warning_active) {
                     speech.stop();
                     // hold_ms = UINT32_MAX so the balloon stays put until we clear it.
-                    g_state->set_balloon_text("Wi-Fi: 切断中", /*hold_ms=*/UINT32_MAX);
+                    g_state->set_balloon_text(config::tr("Wi-Fi: disconnected", "Wi-Fi: 切断中"),
+                                              /*hold_ms=*/UINT32_MAX);
                     balloon_in_flight.store(false, std::memory_order_release);
                     wifi_warning_active = true;
                 } else if (wifi_ok && wifi_warning_active) {
@@ -471,7 +473,9 @@ constexpr const char* kTag = "stackchan";
                     // whose display text (発話内容) the subtitle sink above shows
                     // chunk by chunk, in step with the sound (or all at once if
                     // nothing could be synthesised), so screen and voice always match.
-                    (void)speech.babble(esp_random());
+                    if (config::ui_japanese()) {
+                        (void)speech.babble(esp_random());
+                    }
                     next_speech_ms = now_ms + rand_range_ms(kSpeechMinMs, kSpeechMaxMs);
                 }
             } else {
@@ -554,7 +558,7 @@ constexpr const char* kTag = "stackchan";
                             // subtitle sink; no phrase configured → short balloon only.
                             if (speech.speak_proximity(esp_random()).empty()) {
                                 balloon_in_flight.store(true, std::memory_order_release);
-                                g_state->set_balloon_text("なに？", /*hold_ms=*/1500, [] {
+                                g_state->set_balloon_text(config::tr("Huh?", "なに？"), /*hold_ms=*/1500, [] {
                                     balloon_in_flight.store(false, std::memory_order_release);
                                 });
                             }
@@ -643,7 +647,7 @@ constexpr const char* kTag = "stackchan";
                 g_state->face.expression.store(static_cast<int>(avatar::Expression::Happy),
                                           std::memory_order_relaxed);
                 balloon_in_flight.store(true, std::memory_order_release);
-                g_state->set_balloon_text("なでなで♡", /*hold_ms=*/2200, [] {
+                g_state->set_balloon_text(config::tr("Nuzzle ♡", "なでなで♡"), /*hold_ms=*/2200, [] {
                     balloon_in_flight.store(false, std::memory_order_release);
                 });
 
