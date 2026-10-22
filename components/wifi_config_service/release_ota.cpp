@@ -4,6 +4,7 @@
 #include <wifi_config_service/release_ota.hpp>
 
 #include "https_fetch.hpp"
+#include "update_url.hpp"
 
 #include <atomic>
 #include <cstdio>
@@ -97,9 +98,10 @@ void worker(void* arg)
     // The pages.yml deploy step extracts stackchan_idf.bin out of the
     // release ZIP and stages it at this stable URL alongside the ZIP. Raw
     // (uncompressed) so the device doesn't need DEFLATE on the OTA path.
-    std::snprintf(url, sizeof(url),
-                  "https://ciniml.github.io/stackchan-idf/firmware/%s/%s/stackchan_idf.bin",
+    char path[160];
+    std::snprintf(path, sizeof(path), "firmware/%s/%s/stackchan_idf.bin",
                   a->tag.c_str(), slug);
+    format_update_url(url, sizeof(url), path);
     ESP_LOGI(kTag, "GET %s", url);
 
     esp_http_client_config_t cfg{};
@@ -238,6 +240,9 @@ const char* board_slug(std::uint8_t board_kind)
 tl::expected<void, StartError> start(const std::string& tag,
                                       std::uint8_t board_kind)
 {
+    if (!update_catalog_configured()) {
+        return tl::unexpected(StartError::NoCatalog);
+    }
     if (g_active.load(std::memory_order_acquire)) {
         return tl::unexpected(StartError::AlreadyRunning);
     }
@@ -313,8 +318,14 @@ void versions_fetch_task(void* arg)
     v->ok = false;
 
     esp_http_client_config_t cfg{};
-    cfg.url = v->all ? "https://ciniml.github.io/stackchan-idf/versions-all.json"
-                     : "https://ciniml.github.io/stackchan-idf/versions.json";
+    char url[256];
+    format_update_url(url, sizeof(url), v->all ? "versions-all.json" : "versions.json");
+    if (url[0] == '\0') {
+        ESP_LOGW(kTag, "versions: update catalog URL is empty");
+        xSemaphoreGive(v->done);
+        vTaskDelete(nullptr);
+    }
+    cfg.url = url;
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
     cfg.timeout_ms = kVersionsTimeoutMs;
     cfg.keep_alive_enable = false;
@@ -373,6 +384,7 @@ void versions_fetch_task(void* arg)
 
 bool fetch_versions_json(std::string& out, bool all)
 {
+    if (!update_catalog_configured()) return false;
     VersionsFetch v;
     v.ok = false;
     v.all = all;

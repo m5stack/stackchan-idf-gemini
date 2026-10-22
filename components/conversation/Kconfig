@@ -17,6 +17,19 @@ menu "Stackchan Conversation"
         string "OpenAI Realtime voice"
         default "alloy"
 
+    config STACKCHAN_GEMINI_DEFAULT_MODEL
+        string "Default Gemini Live native-audio model"
+        default "gemini-3.8-live"
+        help
+            Used when NVS gemini_model is empty. AI Studio Live API (not
+            Vertex). gemini-3.8-live is the current GA low-latency native
+            audio model; gemini-2.5-flash-native-audio-preview-12-2025
+            remains selectable from the settings page until its shutdown.
+
+    config STACKCHAN_GEMINI_DEFAULT_VOICE
+        string "Default Gemini Live prebuilt voice"
+        default "Aoede"
+
     config STACKCHAN_CONV_WS_RX_BUFFER
         int "WebSocket RX reassembly buffer size (bytes)"
         default 131072

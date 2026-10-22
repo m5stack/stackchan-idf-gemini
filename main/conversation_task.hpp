@@ -39,6 +39,10 @@ struct ConversationTaskArgs {
     // Empty url hides the tool.
     const char* agent_url = "";
     const char* agent_token = "";
+    // Gemini Live model + prebuilt voice. Empty → firmware / Kconfig default.
+    // Ignored by OpenAI / XiaoZhi.
+    const char* gemini_model = "";
+    const char* gemini_voice = "";
     // Internal-RAM playback ring, pre-allocated by app_main in the boot-time
     // low-fragmentation window. We can't allocate this lazily from the
     // conversation task: by the time it runs (post Wi-Fi association, ~12 s

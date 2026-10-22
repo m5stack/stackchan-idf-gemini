@@ -5,7 +5,7 @@ stackchan-idf の**自前ソース**は Boost Software License 1.0 ([LICENSE](LI
 GitHub Pages) に含まれる、または同梱する**第三者のソフトウェアと音声データ**の
 帰属表示と適用ライセンスをまとめたものです。
 
-このページの HTML 版は <https://ciniml.github.io/stackchan-idf/licenses.html>
+このページの HTML 版は <https://m5stack.github.io/stackchan-idf-gemini/licenses.html>
 から参照できます (設定ページ・Web フラッシャーからもリンク)。
 
 ---
@@ -87,6 +87,20 @@ Open JTalk / pyopenjtalk を使います (firmware には含みません)。
 |---|---|---|
 | esptool-js (`docs/esptool.js`) | Apache-2.0 | © Espressif Systems |
 | pako (esptool-js に同梱) | MIT AND Zlib | © 2014-2017 Vitaly Puzrin, Andrey Tupitsin |
+
+---
+
+## Google Cloud ロゴ (起動スプラッシュ)
+
+起動時 LCD に表示する Google Cloud ワードマークは Wikimedia Commons の
+公式カラー SVG から、ボード解像度ごとの PNG に変換して firmware に埋め込んでいます。
+Google 向け顧客ビルドでの商標使用は承認済みです。
+
+- ページ: <https://commons.wikimedia.org/wiki/File:Google_Cloud_logo.svg>
+- ファイル: <https://upload.wikimedia.org/wikipedia/commons/5/51/Google_Cloud_logo.svg>
+- ライセンス: [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/)
+- 生成スクリプト: [tools/gen_google_cloud_splash.py](tools/gen_google_cloud_splash.py)
+- 埋め込み: `assets/splash/splash_{cores3,atom,stopwatch}.png`
 
 ---
 

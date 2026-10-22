@@ -17,6 +17,7 @@
 
 #include "settings_sinks.hpp"
 #include "utf8.hpp"
+#include <config_service/product.hpp>
 
 namespace stackchan::app::agent_tools {
 
@@ -103,9 +104,13 @@ std::string tool_get_time()
     std::tm tm{};
     localtime_r(&now, &tm);
     if (tm.tm_year + 1900 < 2020) {
-        return R"json({"ok":false,"error":"時計がまだ合っていません (Wi-Fi 未接続か NTP 未同期)"})json";
+        return config::ui_japanese()
+                   ? R"json({"ok":false,"error":"時計がまだ合っていません (Wi-Fi 未接続か NTP 未同期)"})json"
+                   : R"json({"ok":false,"error":"clock not set yet (Wi-Fi down or NTP not synced)"})json";
     }
-    static const char* kWeekday[] = {"日", "月", "火", "水", "木", "金", "土"};
+    static const char* kWeekdayJa[] = {"日", "月", "火", "水", "木", "金", "土"};
+    static const char* kWeekdayEn[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    const char* const* kWeekday = config::ui_japanese() ? kWeekdayJa : kWeekdayEn;
     char buf[160];
     std::snprintf(buf, sizeof(buf),
                   R"({"ok":true,"date":"%04d-%02d-%02d","time":"%02d:%02d","weekday":"%s","timezone":"JST"})",
@@ -158,9 +163,9 @@ std::string tool_remember(const std::string& args)
     if (deserializeJson(in, args)) return error_json("bad arguments");
     std::string key = in["key"] | "";
     std::string text = in["text"] | "";
-    if (key.empty() || text.empty()) return error_json("key と text が必要です");
+    if (key.empty() || text.empty()) return error_json(config::tr("key and text are required", "key と text が必要です"));
     if (key.size() > kMaxKeyBytes) key.resize(kMaxKeyBytes);
-    if (text.size() > kMaxValueBytes) return error_json("text が長すぎます (500 バイトまで)");
+    if (text.size() > kMaxValueBytes) return error_json(config::tr("text is too long (500 bytes max)", "text が長すぎます (500 バイトまで)"));
 
     auto store = make_json_doc();
     JsonArray arr = load_items(store);
@@ -178,7 +183,7 @@ std::string tool_remember(const std::string& args)
     item["v"] = text;
     item["t"] = static_cast<double>(std::time(nullptr));
     const std::size_t n = arr.size();
-    if (!save_items(store)) return error_json("保存に失敗しました");
+    if (!save_items(store)) return error_json(config::tr("save failed", "保存に失敗しました"));
     ESP_LOGI(kTag, "remember: %s (%u items)", key.c_str(), static_cast<unsigned>(n));
     char b[64];
     std::snprintf(b, sizeof(b), R"({"ok":true,"stored":%u})", static_cast<unsigned>(n));
@@ -212,14 +217,14 @@ std::string tool_forget(const std::string& args)
     auto in = make_json_doc();
     if (deserializeJson(in, args)) return error_json("bad arguments");
     const std::string key = in["key"] | "";
-    if (key.empty()) return error_json("key が必要です");
+    if (key.empty()) return error_json(config::tr("key is required", "key が必要です"));
     auto store = make_json_doc();
     JsonArray arr = load_items(store);
     int removed = 0;
     for (std::size_t i = arr.size(); i-- > 0;) {
         if (key == (arr[i]["k"] | "")) { arr.remove(i); ++removed; }
     }
-    if (!save_items(store)) return error_json("保存に失敗しました");
+    if (!save_items(store)) return error_json(config::tr("save failed", "保存に失敗しました"));
     char b[64];
     std::snprintf(b, sizeof(b), R"({"ok":true,"removed":%d})", removed);
     return b;
@@ -234,9 +239,15 @@ std::string tool_set_timer(const std::string& args, SharedState& state)
     const double seconds = in["seconds"] | -1.0;
     std::string display = in["message"] | "";
     std::string reading = in["reading"] | "";
-    if (seconds <= 0 || seconds > 12 * 3600) return error_json("seconds は 1〜43200 の範囲で指定してください");
-    if (display.empty()) display = "じかんだよ";
-    if (reading.empty()) reading = display;
+    if (seconds <= 0 || seconds > 12 * 3600)
+        return error_json(config::tr("seconds must be between 1 and 43200",
+                                     "seconds は 1〜43200 の範囲で指定してください"));
+    if (display.empty()) display = config::tr("It's time", "じかんだよ");
+    if (reading.empty()) {
+        // Japanese formant TTS cannot speak English; leave empty so demo_loop
+        // falls back to the balloon only.
+        reading = config::ui_japanese() ? display : std::string{};
+    }
     if (display.size() > 120) display.resize(120);
     if (reading.size() > 120) reading.resize(120);
     const std::uint32_t now_ms = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
@@ -274,11 +285,15 @@ std::string tool_set_volume(const std::string& args, SharedState& state)
     } else if (action == "down") {
         pct = std::max(kMin, pct - kStep);
     } else if (action == "set") {
-        if (level < 0 || level > kMax) return R"({"ok":false,"error":"level は 0〜200 で指定"})";
+        if (level < 0 || level > kMax)
+            return config::ui_japanese() ? R"({"ok":false,"error":"level は 0〜200 で指定"})"
+                                         : R"({"ok":false,"error":"level must be 0..200"})";
         pct = std::max(kMin, level);
         muted = false;
     } else {
-        return R"({"ok":false,"error":"action は up / down / mute / unmute / set のいずれか"})";
+        return config::ui_japanese()
+                   ? R"({"ok":false,"error":"action は up / down / mute / unmute / set のいずれか"})"
+                   : R"({"ok":false,"error":"action must be up / down / mute / unmute / set"})";
     }
     state.speaker.muted.store(muted, std::memory_order_relaxed);
     settings_sinks::apply_speaker_volume_persist(static_cast<std::uint16_t>(pct));
@@ -300,7 +315,9 @@ std::string tool_lt_timer(const std::string& args, SharedState& state)
     const double minutes = in["minutes"] | 0.0;
     char buf[160];
     if (action == "start") {
-        if (minutes < 0.5 || minutes > 180) return R"({"ok":false,"error":"minutes は 0.5〜180 で指定"})";
+        if (minutes < 0.5 || minutes > 180)
+            return config::ui_japanese() ? R"({"ok":false,"error":"minutes は 0.5〜180 で指定"})"
+                                         : R"({"ok":false,"error":"minutes must be 0.5..180"})";
         const auto total_s = static_cast<std::uint16_t>(minutes * 60.0 + 0.5);
         state.lt.total_s.store(total_s, std::memory_order_relaxed);
         state.lt.command.store(1, std::memory_order_release);
@@ -320,84 +337,108 @@ std::string tool_lt_timer(const std::string& args, SharedState& state)
                       static_cast<unsigned>(state.lt.total_s.load(std::memory_order_relaxed)));
         return buf;
     }
-    return R"({"ok":false,"error":"action は start / stop / status のいずれか"})";
+    return config::ui_japanese() ? R"({"ok":false,"error":"action は start / stop / status のいずれか"})"
+                                 : R"({"ok":false,"error":"action must be start / stop / status"})";
 }
 
 std::vector<conv::ToolDefinition> definitions()
 {
+    const bool ja = config::ui_japanese();
     return {
         conv::ToolDefinition{
             .name = "lt_timer",
-            .description =
-                "発表 (LT) 用のカウントダウン タイマー。action: start (minutes で長さを指定、例 1 や 5)、"
-                "stop (停止・リセット)、status (残り時間)。画面に残り時間を表示し、残り 1 分・終了・超過を声で知らせる。"
-                "「3 分のタイマーをセット」「タイマー止めて」「あと何分？」などで使う。"
-                "単純に N 分後に一言知らせてほしいだけなら set_timer を使う。",
+            .description = ja
+                ? "発表 (LT) 用のカウントダウン タイマー。action: start (minutes で長さを指定、例 1 や 5)、"
+                  "stop (停止・リセット)、status (残り時間)。画面に残り時間を表示し、残り 1 分・終了・超過を声で知らせる。"
+                  "「3 分のタイマーをセット」「タイマー止めて」「あと何分？」などで使う。"
+                  "単純に N 分後に一言知らせてほしいだけなら set_timer を使う。"
+                : "Lightning-talk countdown timer. action: start (minutes, e.g. 1 or 5), "
+                  "stop, status. Shows remaining time on screen. In English mode announcements "
+                  "are on-screen only (no Japanese TTS). Use set_timer for a one-shot reminder.",
             .parameters_json =
                 R"({"type":"object","properties":{"action":{"type":"string","enum":["start","stop","status"]},)"
                 R"("minutes":{"type":"number","minimum":0.5,"maximum":180}},"required":["action"]})",
         },
         conv::ToolDefinition{
             .name = "set_volume",
-            .description =
-                "スピーカーの音量を変える / ミュートする。action: up (少し上げる), down (少し下げる), "
-                "mute (消音), unmute (消音解除), set (level で 0〜200% を直接指定、100 が標準)。"
-                "「音量上げて」「うるさい」「静かにして」「ミュート」「音出して」などで使う。",
+            .description = ja
+                ? "スピーカーの音量を変える / ミュートする。action: up (少し上げる), down (少し下げる), "
+                  "mute (消音), unmute (消音解除), set (level で 0〜200% を直接指定、100 が標準)。"
+                  "「音量上げて」「うるさい」「静かにして」「ミュート」「音出して」などで使う。"
+                : "Change speaker volume or mute. action: up, down, mute, unmute, set "
+                  "(level 0..200 percent, 100 = default).",
             .parameters_json =
                 R"({"type":"object","properties":{"action":{"type":"string","enum":["up","down","mute","unmute","set"]},)"
                 R"("level":{"type":"integer","minimum":0,"maximum":200}},"required":["action"]})",
         },
         conv::ToolDefinition{
             .name = "get_time",
-            .description = "現在の日付・時刻・曜日 (日本時間) を取得する。時間や日付を聞かれたら必ずこれで確認する。",
+            .description = ja ? "現在の日付・時刻・曜日 (日本時間) を取得する。時間や日付を聞かれたら必ずこれで確認する。"
+                              : "Get the current date, time, and weekday (JST). Always call this instead of guessing.",
             .parameters_json = R"({"type":"object","properties":{}})",
         },
         conv::ToolDefinition{
             .name = "get_status",
-            .description =
-                "スタックチャン自身の状態を取得する: 近接センサー (手が近くにあるか)、バッテリー残量、"
-                "起動からの時間、LT タイマーの残り。体調や電池、近くに何かあるか聞かれたときに使う。",
+            .description = ja
+                ? "スタックチャン自身の状態を取得する: 近接センサー (手が近くにあるか)、バッテリー残量、"
+                  "起動からの時間、LT タイマーの残り。体調や電池、近くに何かあるか聞かれたときに使う。"
+                : "Read Stack-chan's own status: proximity (hand nearby), battery, uptime, LT timer remaining.",
             .parameters_json = R"({"type":"object","properties":{}})",
         },
         conv::ToolDefinition{
             .name = "remember",
-            .description =
-                "ユーザーに頼まれたことや大事な情報を、電源を切っても残るメモとして保存する。"
-                "key は短い見出し (例: \"ユーザーの名前\")、text は内容。同じ key は上書き。",
+            .description = ja
+                ? "ユーザーに頼まれたことや大事な情報を、電源を切っても残るメモとして保存する。"
+                  "key は短い見出し (例: \"ユーザーの名前\")、text は内容。同じ key は上書き。"
+                : "Persist a short note across reboots. key is a heading, text is the content. Same key overwrites.",
             .parameters_json = R"({"type":"object","properties":{"key":{"type":"string","maxLength":48},)"
                                R"("text":{"type":"string","maxLength":500}},"required":["key","text"]})",
         },
         conv::ToolDefinition{
             .name = "recall",
-            .description = "保存してあるメモを読み出す。key を省略すると全部返す。以前の話や約束を聞かれたら使う。",
+            .description = ja ? "保存してあるメモを読み出す。key を省略すると全部返す。以前の話や約束を聞かれたら使う。"
+                              : "Recall stored notes. Omit key to list all.",
             .parameters_json = R"({"type":"object","properties":{"key":{"type":"string"}}})",
         },
         conv::ToolDefinition{
             .name = "forget",
-            .description = "保存してあるメモを key を指定して消す。",
+            .description = ja ? "保存してあるメモを key を指定して消す。" : "Delete a stored note by key.",
             .parameters_json = R"({"type":"object","properties":{"key":{"type":"string"}},"required":["key"]})",
         },
         conv::ToolDefinition{
             .name = "set_timer",
-            .description =
-                "指定秒数後にスタックチャンが自分から声をかける (タイマー / リマインダー)。"
-                "message は画面に出す文、reading はその読み (ひらがな・カタカナのみ、漢字不可)。"
-                "設定できるのは 1 件だけで、再起動すると消える。",
-            .parameters_json =
-                R"({"type":"object","properties":{"seconds":{"type":"integer","minimum":1,"maximum":43200},)"
-                R"("message":{"type":"string","maxLength":60},"reading":{"type":"string","maxLength":80}},)"
-                R"("required":["seconds","message","reading"]})",
+            .description = ja
+                ? "指定秒数後にスタックチャンが自分から声をかける (タイマー / リマインダー)。"
+                  "message は画面に出す文、reading はその読み (ひらがな・カタカナのみ、漢字不可)。"
+                  "設定できるのは 1 件だけで、再起動すると消える。"
+                : "One-shot reminder after N seconds. message is shown on screen. "
+                  "reading (hiragana) is optional and ignored in English mode (text balloon only). "
+                  "One reminder at a time; lost on reboot.",
+            .parameters_json = ja
+                ? R"({"type":"object","properties":{"seconds":{"type":"integer","minimum":1,"maximum":43200},)"
+                  R"("message":{"type":"string","maxLength":60},"reading":{"type":"string","maxLength":80}},)"
+                  R"("required":["seconds","message","reading"]})"
+                : R"({"type":"object","properties":{"seconds":{"type":"integer","minimum":1,"maximum":43200},)"
+                  R"("message":{"type":"string","maxLength":60},"reading":{"type":"string","maxLength":80}},)"
+                  R"("required":["seconds","message"]})",
         },
     };
 }
 
 const char* guidance()
 {
-    return "\n\n[ツール] 時刻や日付を聞かれたら get_time、電池や近くの様子を聞かれたら get_status を使って"
-           "確かめてから答えてください (推測で答えない)。覚えておいてと言われたら remember、"
-           "前に話したことを聞かれたら recall を使います。「N 分後に教えて」は set_timer を使います "
-           "(reading はひらがなで)。音量やミュートの指示は set_volume、「N 分のタイマーをセット」は lt_timer を使います。ツールは必ず関数呼び出し (function calling) の仕組みで呼び、"
-           "「tool_code」や関数名を文章・音声として話さないでください。ツールの結果は要点だけ短く話してください。";
+    return config::ui_japanese()
+               ? "\n\n[ツール] 時刻や日付を聞かれたら get_time、電池や近くの様子を聞かれたら get_status を使って"
+                 "確かめてから答えてください (推測で答えない)。覚えておいてと言われたら remember、"
+                 "前に話したことを聞かれたら recall を使います。「N 分後に教えて」は set_timer を使います "
+                 "(reading はひらがなで)。音量やミュートの指示は set_volume、「N 分のタイマーをセット」は lt_timer を使います。ツールは必ず関数呼び出し (function calling) の仕組みで呼び、"
+                 "「tool_code」や関数名を文章・音声として話さないでください。ツールの結果は要点だけ短く話してください。"
+               : "\n\n[Tools] Use get_time for the date or time, and get_status for battery / "
+                 "proximity / uptime — do not guess. Use remember / recall / forget for notes. "
+                 "Use set_timer for a one-shot reminder (message only; do not rely on reading). "
+                 "Use set_volume for loudness, lt_timer for a countdown on screen. Always invoke "
+                 "tools via function calling; never speak tool names or tool_code. Summarise tool "
+                 "results briefly.";
 }
 
 std::optional<std::string> dispatch(const std::string& name, const std::string& args, SharedState& state)

@@ -70,11 +70,12 @@ set(_DSL_PRESET_FILES
 # via the SETTINGS_COMMON placeholder, so it is a rebuild trigger too.
 file(GLOB _DSL_JS "${PROJECT_DIR}/tools/avatar_dsl/*.js" "${PROJECT_DIR}/tools/avatar_dsl/*.mjs")
 set(_SETTINGS_COMMON_JS "${PROJECT_DIR}/tools/settings_common.js")
+set(_GEMINI_UI_JS "${PROJECT_DIR}/tools/gemini_ui.js")
 
 add_custom_command(
     OUTPUT "${_SETTINGS_OUT}"
     COMMAND ${NODE_EXECUTABLE} "${_DSL_INJECT}" "${_SETTINGS_SRC}" "${_SETTINGS_OUT}" ${_DSL_PRESETS}
-    DEPENDS "${_SETTINGS_SRC}" ${_DSL_PRESET_FILES} ${_DSL_JS} "${_SETTINGS_COMMON_JS}"
+    DEPENDS "${_SETTINGS_SRC}" ${_DSL_PRESET_FILES} ${_DSL_JS} "${_SETTINGS_COMMON_JS}" "${_GEMINI_UI_JS}"
     COMMENT "[wifi_config_service] injecting avatar DSL compiler + presets into settings_wifi.html"
     VERBATIM
 )

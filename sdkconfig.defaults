@@ -243,3 +243,16 @@ CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 CONFIG_ESP_COREDUMP_CHECK_BOOT=n
 CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=40
+
+# --- Gemini customer build (Google) ---------------------------------------
+# Additive product profile: lock the runtime provider to Gemini Live, show
+# a Google Cloud boot splash, and point in-app OTA / voice-fetch at this
+# fork's GitHub Pages instead of upstream ciniml/stackchan-idf. Kconfig
+# defaults stay off / upstream so a tree without these lines (or with
+# them commented) builds the original multi-provider firmware.
+CONFIG_STACKCHAN_GEMINI_ONLY=y
+CONFIG_STACKCHAN_BOOT_SPLASH=y
+CONFIG_STACKCHAN_BOOT_SPLASH_MS=2000
+CONFIG_STACKCHAN_GEMINI_DEFAULT_MODEL="gemini-3.8-live"
+CONFIG_STACKCHAN_GEMINI_DEFAULT_VOICE="Aoede"
+CONFIG_STACKCHAN_UPDATE_BASE_URL="https://m5stack.github.io/stackchan-idf-gemini"

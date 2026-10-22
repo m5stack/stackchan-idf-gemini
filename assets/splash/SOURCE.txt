@@ -1,0 +1,6 @@
+Google Cloud logo (full color wordmark)
+Page: https://commons.wikimedia.org/wiki/File:Google_Cloud_logo.svg
+File: https://upload.wikimedia.org/wikipedia/commons/5/51/Google_Cloud_logo.svg
+Raster used: https://upload.wikimedia.org/wikipedia/commons/thumb/5/51/Google_Cloud_logo.svg/1280px-Google_Cloud_logo.svg.png
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+Customer (Google) approved use of this trademark artwork in firmware.

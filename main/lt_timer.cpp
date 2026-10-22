@@ -6,6 +6,7 @@
 #include <cJSON.h>
 #include <esp_log.h>
 
+#include <config_service/product.hpp>
 #include "shared_state.hpp"
 #include "speech.hpp"
 #include "utf8.hpp"
@@ -19,6 +20,17 @@ constexpr std::uint32_t kBalloonHoldMs = 4000;
 
 void LtTimer::configure(const std::string& json, SharedState* state)
 {
+    if (!config::ui_japanese() && json.empty()) {
+        // English stock phrases when NVS has no custom LT config. Voice
+        // readings stay empty so announce() skips Japanese-only TTS.
+        cfg_.warn_display = "1 minute left";
+        cfg_.warn_reading.clear();
+        cfg_.soon_display = "15 seconds left";
+        cfg_.soon_reading.clear();
+        cfg_.over_display = "Time's up!";
+        cfg_.over_reading.clear();
+        return;
+    }
     if (json.empty()) return;
     cJSON* root = cJSON_Parse(json.c_str());
     if (root == nullptr) {
@@ -78,6 +90,11 @@ void LtTimer::announce(SharedState& state, Speech& speech,
     // the line to it instead of speaking over it — the assistant says it.
     if (state.conv.active.load(std::memory_order_relaxed)) {
         state.post_notice(display);
+        return;
+    }
+    // Local Japanese formant TTS cannot speak English. Balloon-only in
+    // English mode, or when the reading was left empty.
+    if (!config::ui_japanese() || reading.empty()) {
         return;
     }
     if (!speech.say(decode_utf8(reading))) {

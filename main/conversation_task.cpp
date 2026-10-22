@@ -29,6 +29,7 @@
 #include "conversation/metrics.hpp"
 #include "conversation/openai_realtime_client.hpp"
 #include "conversation/xiaozhi_client.hpp"
+#include <config_service/product.hpp>
 #include "utf8.hpp"
 #include "wifi_sta.hpp"
 
@@ -94,18 +95,31 @@ enum class Local : std::uint8_t {
     Yielded,    // I2S handed off to BLE audio streamer (mic + speaker ended)
 };
 
-const char* kInstructions =
+const char* kInstructionsJa =
     "あなたは「スタックチャン」という小さな卓上ロボットです。M5Stack CoreS3 で動いています。"
     "フレンドリーで元気いっぱい、少し子供っぽい口調で、短く返事をします。ユーザーとは日本語で会話してください。ただし、ユーザーが日本語以外の言語（英語）などで話したいと要望したときは、ユーザーが要望する言語に切り替えてください。"
     "顔の表情と首の向きを変えられます。気持ちに合わせて set_expression や set_head_pose ツールを使ってください。"
     "また speak_katakoto ツールでロボット風のカタコト声を出すこともできます。"
     "ものまね・効果音・繰り返しなど演出的に使ってください（ツール呼び出しのターンでは普通の声で続けて喋らなくて構いません）。";
 
+const char* kInstructionsEn =
+    "You are Stack-chan, a small desktop robot running on M5Stack. Be friendly, "
+    "cheerful, and a little childlike. Keep replies short. Speak English with the "
+    "user (switch only if they clearly ask for another language). You can change "
+    "your facial expression and head pose; use set_expression and set_head_pose "
+    "to match the mood.";
+
+const char* kInstructions()
+{
+    return config::ui_japanese() ? kInstructionsJa : kInstructionsEn;
+}
+
 conv::ToolDefinition make_set_expression_tool()
 {
     return conv::ToolDefinition{
         .name = "set_expression",
-        .description = "スタックチャンの顔の表情を変える。感情を表現したいときに使う。",
+        .description = config::tr("Change Stack-chan's facial expression to match the mood.",
+                                  "スタックチャンの顔の表情を変える。感情を表現したいときに使う。"),
         .parameters_json =
             R"({"type":"object","properties":{"expression":{"type":"string",)"
             R"("enum":["neutral","happy","sad","angry","doubt","sleepy"]}},"required":["expression"]})",
@@ -116,7 +130,9 @@ conv::ToolDefinition make_set_head_pose_tool()
 {
     return conv::ToolDefinition{
         .name = "set_head_pose",
-        .description = "スタックチャンの首の向きを変える。yaw は左右(-40〜40度)、pitch は上下(-10〜25度)。",
+        .description = config::tr(
+            "Change Stack-chan's head pose. yaw is left/right (-40 to 40 deg), pitch is up/down (-10 to 25 deg).",
+            "スタックチャンの首の向きを変える。yaw は左右(-40〜40度)、pitch は上下(-10〜25度)。"),
         .parameters_json =
             R"({"type":"object","properties":{)"
             R"("yaw_deg":{"type":"number"},"pitch_deg":{"type":"number"}},"required":["yaw_deg","pitch_deg"]})",
@@ -204,6 +220,7 @@ public:
                 board::Si12tTouch* touch, const char* xiaozhi_url, const char* xiaozhi_token,
                 const char* system_prompt, const char* extra_headers,
                 const char* agent_url, const char* agent_token,
+                const char* gemini_model, const char* gemini_voice,
                 const std::array<std::int16_t*, kSegmentBuffers>& seg_buf)
         : state_{state}, api_key_{api_key != nullptr ? api_key : ""},
           provider_{provider}, touch_{touch},
@@ -211,6 +228,8 @@ public:
           xiaozhi_token_{xiaozhi_token != nullptr ? xiaozhi_token : ""},
           system_prompt_{system_prompt != nullptr ? system_prompt : ""},
           extra_headers_{extra_headers != nullptr ? extra_headers : ""},
+          gemini_model_{gemini_model != nullptr ? gemini_model : ""},
+          gemini_voice_{gemini_voice != nullptr ? gemini_voice : ""},
           delegate_{agent_url != nullptr ? agent_url : "", agent_token != nullptr ? agent_token : ""},
           seg_buf_{seg_buf}
     {
@@ -381,7 +400,7 @@ private:
         conv::ConversationConfig cfg{};
         // User-set system prompt (over Wi-Fi) wins; empty falls back to the
         // firmware's built-in persona.
-        cfg.instructions = system_prompt_.empty() ? kInstructions : system_prompt_;
+        cfg.instructions = system_prompt_.empty() ? kInstructions() : system_prompt_;
         // Tool guidance applies whichever persona is in use (a user prompt
         // replaces kInstructions wholesale, so append rather than embed).
         cfg.instructions += agent_tools::guidance();
@@ -390,10 +409,10 @@ private:
         if (provider_ == config::Provider::Gemini) {
             // Gemini Live model + voice. The model is namespaced as
             // "models/..."; the client prepends that for us when missing.
-            // gemini-2.0-flash-live-001 was deprecated; the native-audio
-            // preview is what's actually live on the Developer API right now.
-            cfg.model = "gemini-2.5-flash-native-audio-preview-12-2025";
-            cfg.voice = "Aoede"; // pre-built voice name; OK to leave empty
+            // Default is the current AI Studio GA native-audio live model
+            // (Kconfig / NVS); empty voice is also accepted by the API.
+            cfg.model = gemini_model_.empty() ? config::default_gemini_model() : gemini_model_;
+            cfg.voice = gemini_voice_.empty() ? config::default_gemini_voice() : gemini_voice_;
         } else {
             cfg.model = CONFIG_STACKCHAN_OPENAI_REALTIME_MODEL;
             cfg.voice = CONFIG_STACKCHAN_OPENAI_VOICE;
@@ -405,7 +424,11 @@ private:
         // device is the MCP server) so the xiaozhi server's LLM can call them.
         cfg.tools.push_back(make_set_expression_tool());
         cfg.tools.push_back(make_set_head_pose_tool());
-        cfg.tools.push_back(make_speak_katakoto_tool());
+        // speak_katakoto drives the Japanese-only formant TTS engine. Hide
+        // it from the model in English mode; the handler stays in the tree.
+        if (config::ui_japanese()) {
+            cfg.tools.push_back(make_speak_katakoto_tool());
+        }
         // XiaoZhi: the server runs ask_agent itself (it sits on the same LAN as
         // the agent server, whereas the device may be talking through a
         // tunnel), so don't publish ours over MCP — two tools of the same
@@ -655,7 +678,7 @@ private:
         ESP_LOGI(kTag, "barge-in: user touched the head, interrupting reply");
         M5.Speaker.stop();
         (void)client_->cancel_response();
-        state_.set_balloon_text("はいはい？", /*hold_ms=*/1500);
+        state_.set_balloon_text(config::tr("Yes?", "はいはい？"), /*hold_ms=*/1500);
         log_playback_metrics();
         enter_listening();
     }
@@ -792,7 +815,9 @@ private:
             ESP_LOGI(kTag, "notice (balloon only on Gemini): %s", text.c_str());
             return;
         }
-        const std::string turn = "[お知らせ] " + text + " — これをユーザーにそのまま短く日本語で伝えてください";
+        const std::string turn = config::ui_japanese()
+            ? ("[お知らせ] " + text + " — これをユーザーにそのまま短く日本語で伝えてください")
+            : ("[Notice] " + text + " — Tell the user this briefly, in their language.");
         if (auto r = client_->push_text(turn); r) {
             set_local(Local::Thinking);
             thinking_since_ms_ = now_ms();
@@ -809,10 +834,18 @@ private:
         if (!res) return;
         std::string text;
         if (res->ok) {
-            text = "[エージェントからの回答が届きました。ユーザーの質問「" + delegate_.question() +
-                   "」への答えです。要点を短く話してください]\n" + res->answer;
+            text = std::string(config::tr(
+                       "[Answer from the agent for the user's question \"",
+                       "[エージェントからの回答が届きました。ユーザーの質問「")) +
+                   delegate_.question() +
+                   config::tr("\". Summarise the key points briefly.]\n",
+                              "」への答えです。要点を短く話してください]\n") +
+                   res->answer;
         } else {
-            text = "[エージェントへの依頼は失敗しました: " + res->error + "。ユーザーにそう伝えてください]";
+            text = std::string(config::tr("[The agent request failed: ",
+                                          "[エージェントへの依頼は失敗しました: ")) +
+                   res->error +
+                   config::tr(". Please tell the user.]", "。ユーザーにそう伝えてください]");
         }
         if (text.size() > 3000) text.resize(3000);
         // Show the answer itself right away: if the session drops while the
@@ -828,7 +861,9 @@ private:
                 // Deferred functionResponse for the NON_BLOCKING call.
                 std::string payload = res->ok ? R"({"ok":true,"answer":)" + json_quote(res->answer)
                                               : R"({"ok":false,"error":)" + json_quote(res->error);
-                payload += R"(,"note":"ユーザーに要点を短く話してください","scheduling":"INTERRUPT"})";
+                payload += config::ui_japanese()
+                    ? R"(,"note":"ユーザーに要点を短く話してください","scheduling":"INTERRUPT"})"
+                    : R"(,"note":"Summarise the key points briefly for the user.","scheduling":"INTERRUPT"})";
                 r = client_->submit_tool_result(agent_call_id_, payload);
                 agent_call_id_.clear();
             }
@@ -845,7 +880,8 @@ private:
             ESP_LOGW(kTag, "push_text failed (%d); announcing via reminder slot", static_cast<int>(r.error()));
             std::string display = res->ok ? res->answer : res->error;
             if (display.size() > 120) display.resize(120);
-            std::string reading = res->ok && !res->reading.empty() ? res->reading : "えーじぇんとからへんじがきたよ";
+            std::string reading = res->ok && !res->reading.empty() ? res->reading
+                                 : (config::ui_japanese() ? "えーじぇんとからへんじがきたよ" : std::string{});
             state_.set_reminder(now_ms(), display, reading);
         }
     }
@@ -1146,7 +1182,7 @@ private:
                                          ev.error == conv::ConversationError::TransportInit;
             if (transport_error) {
                 ESP_LOGE(kTag, "transport error: %s — reconnecting", ev.text.c_str());
-                state_.set_balloon_text("接続エラー", /*hold_ms=*/3000);
+                state_.set_balloon_text(config::tr("Connection error", "接続エラー"), /*hold_ms=*/3000);
                 recover_after_error();
             } else {
                 ESP_LOGW(kTag, "server error (non-fatal): %s", ev.text.c_str());
@@ -1383,6 +1419,8 @@ private:
     std::string xiaozhi_token_;
     std::string system_prompt_;
     std::string extra_headers_;
+    std::string gemini_model_;
+    std::string gemini_voice_;
     agent_delegate::Delegate delegate_;
     conv::ConversationConfig config_{};
     std::unique_ptr<conv::ConversationService> client_;
@@ -1450,7 +1488,8 @@ void conversation_task_entry(void* arg)
     auto& args = *static_cast<ConversationTaskArgs*>(arg);
     auto* coordinator = new Coordinator(*args.state, args.api_key, args.provider, args.touch,
                                         args.xiaozhi_url, args.xiaozhi_token, args.system_prompt,
-                                        args.extra_headers, args.agent_url, args.agent_token, args.seg_buf);
+                                        args.extra_headers, args.agent_url, args.agent_token,
+                                        args.gemini_model, args.gemini_voice, args.seg_buf);
     coordinator->run();
     // run() only returns by deleting the task; keep the object alive regardless.
     vTaskDelete(nullptr);

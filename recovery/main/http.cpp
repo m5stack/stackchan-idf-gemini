@@ -175,6 +175,7 @@ esp_err_t handle_ota_release_post(httpd_req_t* req)
         case StartError::BadTag:            msg = "bad tag";         break;
         case StartError::UnknownBoard:      msg = "unknown board";   break;
         case StartError::WorkerSpawnFailed: msg = "spawn failed";    break;
+        case StartError::NoCatalog:         msg = "update catalog unset"; break;
         }
         return send_error(req, "400 Bad Request", msg);
     }

@@ -4,7 +4,7 @@ name: Deploy GitHub Pages
 # site. Refreshed on doc edits, on each release publish, and on demand.
 on:
   push:
-    branches: [main]
+    branches: [main, gemini]
     paths:
       - 'docs/**'
       # tools/settings.html is the canonical source; pages.yml copies it
@@ -15,6 +15,7 @@ on:
       # <script src> — deployed next to it (and inlined into the firmware's
       # settings_wifi.html at build time).
       - 'tools/settings_common.js'
+      - 'tools/gemini_ui.js'
       # The avatar preview module (avatar_module.js) and standalone
       # avatar.html are built from these on every deploy; rebuild when the
       # source, the VM, the JS DSL compiler or the default DSL changes.
@@ -93,6 +94,8 @@ jobs:
           # Shared settings-page helpers — settings.html references this as
           # a sibling <script src="settings_common.js">.
           cp tools/settings_common.js _site/settings_common.js
+          # Gemini customer overlay (English UI / Gemini-only fields).
+          cp tools/gemini_ui.js _site/gemini_ui.js
           # Avatar preview module embedded by settings.html (built above).
           cp build/avatar_web/avatar_module.js _site/avatar_module.js
           # Standalone preview page (shell UI + canvas + DSL editor) — same

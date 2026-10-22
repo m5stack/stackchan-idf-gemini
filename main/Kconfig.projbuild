@@ -100,3 +100,35 @@ config STACKCHAN_MIC_TAP_HOST
         同じ時計 (機体 ms) で突き合わせるための診断用。通常は空 (無効)。
 
 endmenu
+
+menu "Stack-chan product profile (Gemini customer build)"
+
+    config STACKCHAN_GEMINI_ONLY
+        bool "Lock AI provider to Gemini Live"
+        default n
+        help
+            Hide OpenAI / XiaoZhi from every user-facing config surface,
+            ignore attempts to select them over BLE / HTTP, and force the
+            effective provider to Gemini even if NVS still holds an old
+            value. OpenAI / XiaoZhi source stays in the tree. Turn off to
+            restore upstream multi-provider behaviour.
+
+    config STACKCHAN_BOOT_SPLASH
+        bool "Show Google Cloud logo at boot"
+        default n
+        help
+            After Board::begin(), draw a Google Cloud logo on the LCD until
+            the face render task takes over. Per-board PNGs are embedded
+            (CoreS3 320x240, Atom 128x128, StopWatch 466x466).
+
+    config STACKCHAN_BOOT_SPLASH_MS
+        int "Minimum boot-splash display time (ms)"
+        default 2000
+        range 500 5000
+        depends on STACKCHAN_BOOT_SPLASH
+        help
+            Floor on how long the Google Cloud logo stays visible, even if
+            the rest of boot finishes earlier. 1500–3000 ms is the intended
+            range.
+
+endmenu

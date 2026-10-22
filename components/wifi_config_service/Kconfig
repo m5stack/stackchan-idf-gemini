@@ -24,4 +24,15 @@ config WIFI_CONFIG_DEBUG_CRASH_API
         コアダンプ保存 → 再起動 → /api/coredump の一連を検証するための意図的な
         abort() エンドポイント。診断ビルド専用。通常のビルドでは n。
 
+    config STACKCHAN_UPDATE_BASE_URL
+        string "Firmware / voice catalog base URL (empty = disable in-app update)"
+        default "https://ciniml.github.io/stackchan-idf"
+        help
+            GitHub Pages origin that release-fetch OTA and HMM voice-fetch
+            download from (firmware/<tag>/<board>/stackchan_idf.bin,
+            versions.json, voices.json). Empty string hides the in-app
+            "fetch from server" button and makes those fetches fail closed
+            so a device cannot flash a different project's firmware. The
+            Gemini customer build overrides this in sdkconfig.defaults.
+
 endmenu
