@@ -28,10 +28,29 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 JA = re.compile(
     r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]"
 )
+
+# Google Cloud icon geometry from the official multicolour cloud mark in
+# https://commons.wikimedia.org/wiki/File:Google_Cloud_logo.svg. Keeping the
+# vector inline makes the firmware-served SoftAP page fully offline while
+# adding only a few kilobytes to the already-injected HTML.
+GOOGLE_CLOUD_ICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 39 28">'
+    '<path fill="#ea4335" d="M21.85,7.41l1,0,2.85-2.85.14-1.21A12.81,12.81,0,0,0,5,9.6a1.55,1.55,0,0,1,1-.06l5.7-.94s.29-.48.44-.45a7.11,7.11,0,0,1,9.73-.74Z"/>'
+    '<path fill="#4285f4" d="M29.76,9.6a12.84,12.84,0,0,0-3.87-6.24l-4,4A7.11,7.11,0,0,1,24.5,13v.71a3.56,3.56,0,1,1,0,7.12H17.38l-.71.72v4.27l.71.71H24.5A9.26,9.26,0,0,0,29.76,9.6Z"/>'
+    '<path fill="#34a853" d="M10.25,26.49h7.12v-5.7H10.25a3.54,3.54,0,0,1-1.47-.32l-1,.31L4.91,23.63l-.25,1A9.21,9.21,0,0,0,10.25,26.49Z"/>'
+    '<path fill="#fbbc05" d="M10.25,8A9.26,9.26,0,0,0,4.66,24.6l4.13-4.13a3.56,3.56,0,1,1,4.71-4.71l4.13-4.13A9.25,9.25,0,0,0,10.25,8Z"/>'
+    '</svg>'
+)
+GOOGLE_CLOUD_FAVICON = 'data:image/svg+xml,' + quote(GOOGLE_CLOUD_ICON_SVG, safe='')
+GOOGLE_CLOUD_HEADER_ICON = GOOGLE_CLOUD_ICON_SVG.replace(
+    '<svg ', '<svg width="34" height="24" style="flex:none" aria-hidden="true" focusable="false" ', 1
+)
+GOOGLE_CLOUD_TITLE = 'Google Cloud Stack-chan Settings'
 
 # Copyediting regressions that must not reach either the firmware page or the
 # hosted BLE page. These are deliberately concrete: the translation catalog is
@@ -149,6 +168,30 @@ def replace_all(text: str, pairs: list[tuple[str, str]]) -> str:
         output.append(match[1])
         position += len(match[0])
     return "".join(output)
+
+
+def apply_google_branding(text: str) -> str:
+    """Apply the Gemini product branding to a fully translated settings page."""
+    title_pattern = re.compile(
+        r"<title>\s*Stack-chan settings(?: \(Wi-Fi\))?\s*</title>", re.IGNORECASE
+    )
+    heading_pattern = re.compile(
+        r"<h1>\s*(?:🤖\s*)?Stack-chan settings(?: \(Wi-Fi\))?\s*</h1>",
+        re.IGNORECASE,
+    )
+    favicon = f'\n<link rel="icon" type="image/svg+xml" href="{GOOGLE_CLOUD_FAVICON}">'
+    heading = (
+        '<h1 style="display:flex;align-items:center;gap:0.55rem">'
+        f'{GOOGLE_CLOUD_HEADER_ICON}<span>{GOOGLE_CLOUD_TITLE}</span></h1>'
+    )
+    text, title_count = title_pattern.subn(f'<title>{GOOGLE_CLOUD_TITLE}</title>{favicon}', text, count=1)
+    text, heading_count = heading_pattern.subn(heading, text, count=1)
+    if title_count != 1 or heading_count != 1:
+        raise SystemExit(
+            "error: settings branding markers not found; update apply_google_branding() "
+            "for the changed upstream title/header markup"
+        )
+    return text
 
 
 def translate(text: str, pairs: list[tuple[str, str]], polish: list[tuple[str, str]]) -> str:
@@ -278,9 +321,23 @@ def copyedit_lines(text: str) -> list[tuple[int, str]]:
     return [(i, line.rstrip()) for i, line in enumerate(text.splitlines(), 1) if BAD_ENGLISH.search(line)]
 
 
-def report(path: Path, text: str) -> bool:
+def branding_lines(text: str) -> list[tuple[int, str]]:
+    issues: list[tuple[int, str]] = []
+    if f"<title>{GOOGLE_CLOUD_TITLE}</title>" not in text:
+        issues.append((0, "missing branded document title"))
+    if "data:image/svg+xml," not in text:
+        issues.append((0, "missing inline SVG favicon"))
+    if f"<span>{GOOGLE_CLOUD_TITLE}</span>" not in text:
+        issues.append((0, "missing branded page heading"))
+    return issues
+
+
+def report(path: Path, text: str, require_branding: bool = False) -> bool:
     failed = False
-    for kind, lines in (("Japanese", residual_lines(text)), ("banned English", copyedit_lines(text))):
+    checks = [("Japanese", residual_lines(text)), ("banned English", copyedit_lines(text))]
+    if require_branding:
+        checks.append(("missing Google Cloud branding", branding_lines(text)))
+    for kind, lines in checks:
         if not lines:
             continue
         failed = True
@@ -304,7 +361,8 @@ def main() -> int:
     if args.check:
         failed = False
         for path in args.paths:
-            if report(path, path.read_text(encoding="utf-8")):
+            is_html = path.suffix.lower() in (".html", ".htm")
+            if report(path, path.read_text(encoding="utf-8"), require_branding=is_html):
                 failed = True
         return 1 if failed else 0
 
@@ -314,7 +372,10 @@ def main() -> int:
     for input_name, output_name in zip(args.paths[::2], args.paths[1::2]):
         source = input_name.read_text(encoding="utf-8")
         result = translate(source, pairs, polish)
-        if report(input_name, result):
+        is_html = input_name.suffix.lower() in (".html", ".htm")
+        if is_html:
+            result = apply_google_branding(result)
+        if report(input_name, result, require_branding=is_html):
             failed = True
             continue
         output_name.parent.mkdir(parents=True, exist_ok=True)
