@@ -24,6 +24,7 @@
 #include <M5Unified.h>
 
 #include <config_service/config_service.hpp>
+#include <config_service/product.hpp>
 #include <wifi_config_service/wifi_config_service.hpp>
 
 #include "captive_portal.hpp"
@@ -516,7 +517,8 @@ void derive_ap_credentials()
     std::uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     std::snprintf(g_ap_ssid, sizeof(g_ap_ssid),
-                  "Stackchan-%02X%02X%02X", mac[3], mac[4], mac[5]);
+                  "%s-%02X%02X%02X", config::device_name_prefix(),
+                  mac[3], mac[4], mac[5]);
     std::snprintf(g_ap_pw, sizeof(g_ap_pw),
                   "sc-%02x%02x%02x%02x", mac[2], mac[3], mac[4], mac[5]);
 }

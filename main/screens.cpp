@@ -18,8 +18,8 @@ namespace {
 // --- Adapters over the existing overlay modules ---------------------------
 
 // SoftAP provisioning QR screen. Draws straight to the panel (M5GFX::qrcode)
-// and swallows every tap while AP mode is up (the on-screen 終了 button is
-// the dismiss path on touch boards).
+// and swallows every tap while AP mode is up. The on-screen action is Skip
+// during first-run setup and Exit AP for the normal settings SoftAP.
 class ApScreen final : public Screen {
 public:
     explicit ApScreen(M5GFX& display) : display_{display} {}

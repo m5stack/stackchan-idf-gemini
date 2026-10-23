@@ -316,12 +316,38 @@ void notify_resolved_once()
     if (callback) callback();
 }
 
-void begin_skip()
+bool begin_skip()
 {
-    if (!g_enabled.load()) return;
+    if (!g_enabled.load()) return false;
+
+    bool setup_started;
+    {
+        LockGuard lock{g_lock};
+        setup_started = g_state.setup_started;
+    }
+    if (setup_started || wifi_ap_active()) {
+        if (wifi_ap_active() && !wifi_disable_ap_mode()) {
+            ESP_LOGE(kTag, "could not stop the first-run SoftAP; staying on setup");
+            return false;
+        }
+        // wifi_disable_ap_mode() preserves first-run setup mode on purpose for
+        // the finish/reboot path. A Skip returns to the normal avatar instead.
+        wifi_config::set_first_run_mode(false);
+        wifi_set_setup_mode(false);
+    }
+    {
+        LockGuard lock{g_lock};
+        g_state.setup_started = false;
+        g_state.finish_pending = false;
+        g_state.wifi_state = "idle";
+        g_state.gemini_state = "idle";
+        g_state.scan_state = "idle";
+    }
     g_ui_prompt.store(false);
     g_ui_success.store(false);
     notify_resolved_once();
+    ESP_LOGI(kTag, "setup skipped; returning to avatar");
+    return true;
 }
 
 void begin_setup()
@@ -586,7 +612,7 @@ void gemini_test_task(void* arg)
     config.model = job->model;
     config.voice = job->voice;
     config.instructions = job->prompt.empty()
-        ? "You are Stack-chan. Reply briefly. Do not call tools during this setup test."
+        ? "You are StackChan. Reply briefly. Do not call tools during this setup test."
         : job->prompt;
     config.input_sample_rate_hz = 16000;
     config.output_sample_rate_hz = 24000;
@@ -925,12 +951,12 @@ void draw_prompt(avatar::RichCanvas& canvas)
     canvas.setTextColor(ink, paper);
     canvas.setTextDatum(lgfx::textdatum_t::top_left);
     canvas.setFont(&fonts::Font0);
-    if (!compact) canvas.setFont(&fonts::lgfxJapanGothic_16);
-    canvas.drawString("Stack-chan setup", compact ? 6 : 18, compact ? 8 : 18);
+    if (!compact) canvas.setFont(&fonts::lgfxJapanGothic_24);
+    canvas.drawString("StackChan setup", compact ? 6 : 18, compact ? 8 : 14);
 
     canvas.setTextColor(muted, paper);
     canvas.setFont(&fonts::Font0);
-    if (!compact) canvas.setFont(&fonts::lgfxJapanGothic_12);
+    if (!compact) canvas.setFont(&fonts::lgfxJapanGothic_16);
     bool missing_wifi;
     bool missing_key;
     {
@@ -945,17 +971,21 @@ void draw_prompt(avatar::RichCanvas& canvas)
                           6, 32);
         canvas.drawString("A: setup   hold A: skip", 6, h - 44);
     } else {
-        const char* line1 = missing_wifi && missing_key
-                                ? "Wi-Fi and Gemini API key are not configured."
-                            : missing_wifi ? "Wi-Fi is not configured."
-                                           : "Gemini API key is not configured.";
-        canvas.drawString(line1, 18, 66);
-        canvas.drawString("Start setup opens a guided phone setup page.", 18, 88);
+        if (missing_wifi && missing_key) {
+            canvas.drawString("Wi-Fi and Gemini API key", 18, 64);
+            canvas.drawString("are not configured.", 18, 84);
+        } else {
+            canvas.drawString(missing_wifi ? "Wi-Fi is not configured."
+                                           : "Gemini API key is not configured.",
+                              18, 64);
+        }
+        canvas.drawString("Start setup opens a guided", 18, 112);
+        canvas.drawString("phone setup page.", 18, 132);
     }
 
     const std::int32_t margin = compact ? 6 : 14;
     const std::int32_t gap = compact ? 4 : 10;
-    const std::int32_t button_h = compact ? 24 : 38;
+    const std::int32_t button_h = compact ? 24 : 44;
     const std::int32_t button_y = h - button_h - (compact ? 7 : 14);
     const std::int32_t total_w = w - margin * 2;
     const std::int32_t start_w = (total_w - gap) * 3 / 5;
@@ -973,11 +1003,12 @@ void draw_prompt(avatar::RichCanvas& canvas)
     canvas.setTextColor(ink, grey);
     canvas.setTextDatum(lgfx::textdatum_t::middle_center);
     canvas.setFont(&fonts::Font0);
-    if (!compact) canvas.setFont(&fonts::lgfxJapanGothic_12);
+    if (!compact) canvas.setFont(&fonts::lgfxJapanGothic_20);
     canvas.drawString("Skip", g_skip_x + g_skip_w / 2, g_skip_y + g_skip_h / 2);
 
     canvas.fillRoundRect(g_start_x, g_start_y, g_start_w, g_start_h, 6, blue);
     canvas.setTextColor(TFT_WHITE, blue);
+    if (!compact) canvas.setFont(&fonts::lgfxJapanGothic_20);
     canvas.drawString("Start setup", g_start_x + g_start_w / 2,
                       g_start_y + g_start_h / 2);
     canvas.setTextDatum(lgfx::textdatum_t::top_left);
@@ -994,11 +1025,11 @@ void draw_success(avatar::RichCanvas& canvas)
     canvas.setTextColor(TFT_WHITE, blue);
     canvas.setTextDatum(lgfx::textdatum_t::middle_center);
     canvas.setFont(&fonts::Font0);
-    if (!compact) canvas.setFont(&fonts::lgfxJapanGothic_16);
-    canvas.drawString("Setup complete", w / 2, h / 2 - 12);
+    if (!compact) canvas.setFont(&fonts::lgfxJapanGothic_24);
+    canvas.drawString("Setup complete", w / 2, h / 2 - 14);
     if (!compact) {
-        canvas.setFont(&fonts::lgfxJapanGothic_12);
-        canvas.drawString("Restarting...", w / 2, h / 2 + 16);
+        canvas.setFont(&fonts::lgfxJapanGothic_16);
+        canvas.drawString("Restarting...", w / 2, h / 2 + 18);
     }
     canvas.setTextDatum(lgfx::textdatum_t::top_left);
 }
@@ -1099,6 +1130,11 @@ bool handle_tap(int x, int y)
         return true;
     }
     return true; // prompt owns the panel and must not leak taps underneath
+}
+
+bool skip_setup()
+{
+    return begin_skip();
 }
 
 void poll_button()

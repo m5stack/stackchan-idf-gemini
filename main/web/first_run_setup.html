@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
 <meta name="theme-color" content="#087ac1">
-<title>Stack-chan setup</title>
+<title>StackChan setup</title>
 <style>
   :root {
     --paper: #f5f8fb;
@@ -43,9 +43,10 @@
   header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
   .mark {
     width: 42px; height: 42px; flex: none; border-radius: 8px;
-    display: grid; place-items: center; color: #fff; background: var(--blue);
-    font-weight: 800; letter-spacing: -.04em; box-shadow: var(--shadow);
+    display: grid; place-items: center; background: #fff;
+    border: 1px solid var(--line); box-shadow: var(--shadow);
   }
+  .mark svg { width: 34px; height: 24px; display: block; }
   h1 { margin: 0; font-size: 1.4rem; line-height: 1.2; letter-spacing: -.02em; }
   .subtitle { margin: 3px 0 0; color: var(--muted); font-size: .9rem; }
   .stepper {
@@ -153,9 +154,16 @@
 <body>
 <div class="wrap">
   <header>
-    <div class="mark" aria-hidden="true">SC</div>
+    <div class="mark" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 39 28" focusable="false">
+        <path fill="#ea4335" d="M21.85,7.41l1,0,2.85-2.85.14-1.21A12.81,12.81,0,0,0,5,9.6a1.55,1.55,0,0,1,1-.06l5.7-.94s.29-.48.44-.45a7.11,7.11,0,0,1,9.73-.74Z"/>
+        <path fill="#4285f4" d="M29.76,9.6a12.84,12.84,0,0,0-3.87-6.24l-4,4A7.11,7.11,0,0,1,24.5,13v.71a3.56,3.56,0,1,1,0,7.12H17.38l-.71.72v4.27l.71.71H24.5A9.26,9.26,0,0,0,29.76,9.6Z"/>
+        <path fill="#34a853" d="M10.25,26.49h7.12v-5.7H10.25a3.54,3.54,0,0,1-1.47-.32l-1,.31L4.91,23.63l-.25,1A9.21,9.21,0,0,0,10.25,26.49Z"/>
+        <path fill="#fbbc05" d="M10.25,8A9.26,9.26,0,0,0,4.66,24.6l4.13-4.13a3.56,3.56,0,1,1,4.71-4.71l4.13-4.13A9.25,9.25,0,0,0,10.25,8Z"/>
+      </svg>
+    </div>
     <div>
-      <h1>Stack-chan setup</h1>
+      <h1>StackChan setup</h1>
       <p class="subtitle">Connect Wi-Fi, then verify Gemini.</p>
     </div>
   </header>
@@ -168,7 +176,7 @@
   <main>
     <section class="card" id="wifi-step" aria-labelledby="wifi-title">
       <h2 id="wifi-title">1. Connect Wi-Fi</h2>
-      <p class="lead">Choose the network Stack-chan should use. You can stay connected to the Stack-chan setup Wi-Fi while the device joins your home network.</p>
+      <p class="lead">Choose the network StackChan should use. You can stay connected to the StackChan setup Wi-Fi while the device joins your home network.</p>
 
       <div class="scan-head">
         <div>
@@ -262,11 +270,11 @@
 
       <div class="field">
         <label for="system-prompt">System prompt <span class="label-note">(optional)</span></label>
-        <textarea id="system-prompt" maxlength="2048" placeholder="Leave blank to use the built-in Stack-chan prompt."></textarea>
+        <textarea id="system-prompt" maxlength="2048" placeholder="Leave blank to use the built-in StackChan prompt."></textarea>
       </div>
 
       <div class="notice info" id="gemini-progress" role="status" aria-live="polite">Test the connection before finishing setup.</div>
-      <div class="notice ok" id="gemini-success" role="status" aria-live="polite" hidden>Gemini connection test passed. Finish setup to save and restart Stack-chan.</div>
+      <div class="notice ok" id="gemini-success" role="status" aria-live="polite" hidden>Gemini connection test passed. Finish setup to save and restart StackChan.</div>
       <div class="test-criteria">
         <strong>Pass criterion:</strong> the device opens a secured Gemini Live WebSocket, receives <code>setupComplete</code>, and reaches the <strong>Listening</strong> state within 15 seconds. Editing any field after a pass invalidates the test.
       </div>
@@ -283,8 +291,8 @@
     <section class="card center" id="done-step" aria-labelledby="done-title" hidden>
       <div class="success-mark" aria-hidden="true">✓</div>
       <h2 id="done-title">Setup complete</h2>
-      <p class="lead" id="done-message">Configuration saved. Stack-chan is closing the setup Wi-Fi and restarting.</p>
-      <div class="notice ok" role="status" aria-live="polite">The setup Wi-Fi will disappear. Reconnect your phone to your normal Wi-Fi if needed. Stack-chan will return to its avatar screen.</div>
+      <p class="lead" id="done-message">Configuration saved. StackChan is closing the setup Wi-Fi and restarting.</p>
+      <div class="notice ok" role="status" aria-live="polite">The setup Wi-Fi will disappear. Reconnect your phone to your normal Wi-Fi if needed. StackChan will return to its avatar screen.</div>
       <p class="fine" style="margin-top:18px">You may close this page.</p>
     </section>
   </main>
@@ -551,7 +559,7 @@
           }
           state.testedSnapshot = snapshot;
           hide($('gemini-progress'));
-          show($('gemini-success'), 'Gemini connection test passed. Finish setup to save and restart Stack-chan.', 'ok');
+          show($('gemini-success'), 'Gemini connection test passed. Finish setup to save and restart StackChan.', 'ok');
           $('finish-button').disabled = false;
           return;
         }
@@ -575,7 +583,7 @@
   function showSetupComplete() {
     $('api-key').value = '';
     state.testedSnapshot = null;
-    $('done-message').textContent = 'Configuration saved. Stack-chan is closing the setup Wi-Fi and restarting.';
+    $('done-message').textContent = 'Configuration saved. StackChan is closing the setup Wi-Fi and restarting.';
     updateSteps(3);
   }
 

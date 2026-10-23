@@ -25,6 +25,13 @@ inline constexpr bool gemini_only()
 #endif
 }
 
+// Customer-visible default device / SoftAP name prefix. Keep the upstream
+// spelling in non-Gemini builds so shared components remain sync-friendly.
+inline const char* device_name_prefix()
+{
+    return gemini_only() ? "StackChan" : "Stackchan";
+}
+
 inline Provider effective_provider(const DeviceConfig& cfg)
 {
     return gemini_only() ? Provider::Gemini : cfg.provider;

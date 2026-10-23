@@ -64,7 +64,8 @@ bool wifi_setup_mode();
 // provisioning mode (require_auth bypass + provisioning_mode flag in
 // /api/status), and brings up the captive portal (DNS hijack + 404 catch-all
 // pointing to the settings page).
-//   - SSID = "Stackchan-XXXXXX" (last 3 STA MAC bytes — same as BLE / mDNS).
+//   - SSID = "Stackchan-XXXXXX" (last 3 STA MAC bytes — same as BLE / mDNS;
+//     Gemini builds use the customer spelling "StackChan-XXXXXX").
 //   - WPA2 PSK = "sc-XXXXXXXX"   (last 4 STA MAC bytes, lower hex).
 // Both idempotent.
 void wifi_enable_ap_mode(bool first_run = false);

@@ -6,7 +6,7 @@
 #include <M5Unified.h>
 
 // Full-screen Wi-Fi join QR screen shown while SoftAP provisioning mode is
-// active. Renders a QR encoding `WIFI:T:WPA;S:<SSID>;P:<PW>;H:false;;` (iOS
+// active. Renders a QR encoding `WIFI:T:WPA;S:<SSID>;P:<PW>;;` (iOS
 // Camera and modern Android decode this and offer one-tap join), plus the
 // SSID / PW / URL in human-readable text below it. Takes over the panel
 // outright — no avatar / battery / atom_status compositing — and yields the
@@ -21,9 +21,10 @@ bool active();
 bool draw(M5GFX& display);
 
 // Touch handling. Returns true when AP screen owns the tap (= AP is up).
-// Inside, taps on the on-screen "終了" button disable AP mode; taps that
-// missed the button are still swallowed so they don't leak through to the
-// device_ui underneath.
+// Inside, taps on the on-screen action button either skip first-run setup
+// (stopping the SoftAP and returning to the avatar) or disable the normal
+// settings AP. Taps that missed the button are still swallowed so they don't
+// leak through to the device_ui underneath.
 bool handle_tap(int x, int y);
 
 } // namespace stackchan::app::ap_screen

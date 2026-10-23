@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include <config_service/product.hpp>
 #include <esp_app_desc.h>
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -83,7 +84,8 @@ tl::expected<void, Error> start_mdns()
     }
 
     mdns_hostname_set(g_hostname);
-    mdns_instance_name_set("Stack-chan config");
+    mdns_instance_name_set(config::gemini_only() ? "StackChan config"
+                                                 : "Stack-chan config");
 
     // Plain HTTP on 80. TLS turned out too heavy on internal RAM (each
     // active TLS session was contending with the conversation task's

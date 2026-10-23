@@ -28,6 +28,11 @@ bool draw(avatar::RichCanvas& canvas);
 bool handle_tap(int x, int y);
 void poll_button();
 
+// Leave setup and return to the normal avatar UI. If the first-run SoftAP is
+// active this tears it down first and only reports success after the AP has
+// stopped. Safe to call from the prompt or the on-device QR page.
+bool skip_setup();
+
 // True while the first-run prompt or setup flow owns boot. app_main uses this
 // to suppress conversation startup until Skip. Completion reboots.
 bool active();
