@@ -228,10 +228,17 @@ void event_handler(void* /*arg*/, esp_event_base_t base, int32_t id, void* data)
         } else if (id == WIFI_EVENT_AP_STACONNECTED) {
             // A provisioning client joined — give it quiet air: no STA
             // scans until every client leaves.
+            const auto* event = static_cast<wifi_event_ap_staconnected_t*>(data);
             g_ap_client_count.fetch_add(1, std::memory_order_acq_rel);
             stop_retry_timer();
+            ESP_LOGI(kTag, "AP client joined: " MACSTR " aid=%u",
+                     MAC2STR(event->mac), static_cast<unsigned>(event->aid));
         } else if (id == WIFI_EVENT_AP_STADISCONNECTED) {
+            const auto* event = static_cast<wifi_event_ap_stadisconnected_t*>(data);
             const int left = g_ap_client_count.fetch_sub(1, std::memory_order_acq_rel) - 1;
+            ESP_LOGW(kTag, "AP client left: " MACSTR " reason=%u remaining=%d",
+                     MAC2STR(event->mac), static_cast<unsigned>(event->reason),
+                     left > 0 ? left : 0);
             if (left <= 0) {
                 g_ap_client_count.store(0, std::memory_order_release);
                 if (g_ap_active.load(std::memory_order_acquire) &&
@@ -240,6 +247,10 @@ void event_handler(void* /*arg*/, esp_event_base_t base, int32_t id, void* data)
                 }
             }
         }
+    } else if (base == IP_EVENT && id == IP_EVENT_AP_STAIPASSIGNED) {
+        const auto* event = static_cast<ip_event_ap_staipassigned_t*>(data);
+        ESP_LOGI(kTag, "AP client got IP: " IPSTR " mac=" MACSTR,
+                 IP2STR(&event->ip), MAC2STR(event->mac));
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const auto* event = static_cast<ip_event_got_ip_t*>(data);
         ESP_LOGI(kTag, "got IP: " IPSTR, IP2STR(&event->ip_info.ip));
@@ -554,7 +565,12 @@ void wifi_enable_ap_mode(bool first_run)
     }
 
     g_ap_first_run.store(first_run, std::memory_order_release);
-    if (first_run) wifi_set_setup_mode(true);
+    // Pause background STA reconnect scans for every SoftAP session. The
+    // shared radio otherwise leaves the AP channel periodically for full scans,
+    // which can make a phone fail to join or drop right after joining. Explicit
+    // connect requests from the settings page still work; leaving AP restores
+    // normal automatic reconnect.
+    wifi_set_setup_mode(true);
     derive_ap_credentials();
     if (g_ap_netif == nullptr) {
         g_ap_netif = esp_netif_create_default_wifi_ap();
@@ -597,6 +613,10 @@ void wifi_enable_ap_mode(bool first_run)
     if (st != ESP_OK && st != ESP_ERR_WIFI_NOT_INIT) {
         ESP_LOGW(kTag, "esp_wifi_start (AP) returned %s", esp_err_to_name(st));
     }
+    // Advertise the setup page in DHCP so phones open it immediately after
+    // joining the QR network. DNS hijacking remains the fallback for clients
+    // that do not consume RFC 8910 option 114.
+    captive_portal::configure_dhcp_captive_portal(g_ap_netif);
 
     if (g_ap_netif != nullptr) {
         esp_netif_ip_info_t ip{};

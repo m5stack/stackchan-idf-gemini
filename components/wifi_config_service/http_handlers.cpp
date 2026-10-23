@@ -2275,6 +2275,7 @@ esp_err_t handle_root_get(httpd_req_t* req)
 {
     if (g_first_run_mode.load() &&
         std::strcmp(req->uri, "/setup") != 0) {
+        ESP_LOGI(kTag, "GET %s -> /setup (first-run portal)", req->uri);
         httpd_resp_set_status(req, "302 Found");
         httpd_resp_set_hdr(req, "Location", "/setup");
         httpd_resp_set_hdr(req, "Cache-Control", "no-store");

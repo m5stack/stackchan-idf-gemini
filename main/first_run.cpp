@@ -353,6 +353,7 @@ bool begin_skip()
 void begin_setup()
 {
     if (!g_enabled.load() || !g_ui_prompt.load()) return;
+    ESP_LOGI(kTag, "Start setup selected");
     g_ui_prompt.store(false);
     {
         LockGuard lock{g_lock};
@@ -362,8 +363,10 @@ void begin_setup()
         g_state.scan_state = "idle";
     }
     wifi_config::set_first_run_mode(true);
-    wifi_set_setup_mode(true);
     wifi_enable_ap_mode(true);
+    ESP_LOGI(kTag, "SoftAP start result: active=%d first_run=%d",
+             static_cast<int>(wifi_ap_active()),
+             static_cast<int>(wifi_ap_first_run()));
     if (!wifi_ap_active() || !wifi_ap_first_run()) {
         // Return to the prompt instead of stranding the user on a dead setup
         // screen. Undo every piece of setup state that may have been set by a
@@ -1075,6 +1078,13 @@ void init(bool required, const config::DeviceConfig& cfg, bool button_only)
                         tskIDLE_PRIORITY + 1, nullptr) != pdPASS) {
             ESP_LOGE(kTag, "failed to create HTTP route watcher");
         }
+        // Touch boards go straight to the Wi-Fi QR page. The prompt remains as
+        // a fallback if SoftAP bring-up fails; button-only boards keep the
+        // existing A-button prompt flow because they cannot scan a QR code.
+        if (!button_only) {
+            ESP_LOGI(kTag, "auto-starting first-run SoftAP setup");
+            begin_setup();
+        }
     }
 }
 
@@ -1121,11 +1131,15 @@ bool handle_tap(int x, int y)
 {
     if (g_ui_success.load()) return true;
     if (!g_ui_prompt.load()) return false;
+    ESP_LOGI(kTag, "prompt tap x=%d y=%d start=(%d,%d,%d,%d) skip=(%d,%d,%d,%d)",
+             x, y, g_start_x, g_start_y, g_start_w, g_start_h,
+             g_skip_x, g_skip_y, g_skip_w, g_skip_h);
     if (hit(x, y, g_start_x, g_start_y, g_start_w, g_start_h)) {
         begin_setup();
         return true;
     }
     if (hit(x, y, g_skip_x, g_skip_y, g_skip_w, g_skip_h)) {
+        ESP_LOGI(kTag, "Skip selected");
         begin_skip();
         return true;
     }

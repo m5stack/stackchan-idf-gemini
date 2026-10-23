@@ -85,6 +85,20 @@ namespace {
 
 constexpr const char* kTag = "stackchan";
 
+// The render task starts showing the first-run prompt before app_main reaches
+// run_demo_loop(). Pump touch here during the boot waits so the on-screen
+// Start setup / Skip buttons are live as soon as they are visible. Only the
+// app_main task calls M5.update(), matching the normal demo-loop ownership.
+void pump_screen_touch_inputs()
+{
+    M5.update();
+    stackchan::app::screens::poll_inputs();
+    const auto detail = M5.Touch.getDetail();
+    if (detail.wasPressed()) {
+        (void)stackchan::app::screens::handle_tap(detail.x, detail.y);
+    }
+}
+
 // Debug-only switch: when true, the NeoPixel strip stays uninitialised AND the
 // led_task is never spawned. Kept around because the lgfx i2c mutex has a
 // long-running race (xTaskPriorityDisinherit assert at led_task_entry →
@@ -980,7 +994,6 @@ extern "C" void app_main()
         ESP_LOGI(kTag, "conversation: disabled at compile time (slim build)");
 #endif
     };
-    stackchan::app::first_run::set_ready_callback(start_conversation_once);
     stackchan::app::first_run::init(first_run_required, cfg, profile.button_overlay_ui);
 
     stackchan::app::diag_heap("pre-screens/render");
@@ -1175,7 +1188,14 @@ extern "C" void app_main()
         // ADR-001: 起動確認。主要サブシステム (表示・サーボ・無線) の初期化が済んだ
         // この時点で bootctl の pending を落とす。失敗した起動はブートローダーが
         // 試行回数で数え、上限で Recovery に落とす。
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        if (first_run_required) {
+            for (int i = 0; i < 40; ++i) {
+                pump_screen_touch_inputs();
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
         if (auto r = stackchan::flash_layout::confirm_boot(); r) {
             ESP_LOGI(kTag, "boot confirmed (bootctl pending cleared)");
         } else {
@@ -1235,8 +1255,15 @@ extern "C" void app_main()
     // ESP-NOW モードは httpd も TTS も使わないので、httpd 待ちもボイス ロードも
     // 飛ばして即 demo_loop へ (顔 + 頭部追従のみ)。
     if (!espnow_any) {
-        for (int i = 0; i < 80 && !stackchan::wifi_config::http_started(); ++i) {
-            vTaskDelay(pdMS_TO_TICKS(500));
+        // First-run has no STA HTTP server until the user starts the SoftAP
+        // setup flow, so waiting here without dispatching touch made the
+        // on-screen buttons appear dead for the full 40-second timeout. Pump
+        // the prompt while waiting; Start exits as soon as the AP HTTP server
+        // is up, and Skip can exit immediately because no STA server is needed.
+        for (int i = 0; i < 800 && !stackchan::wifi_config::http_started(); ++i) {
+            if (first_run_required) pump_screen_touch_inputs();
+            if (first_run_required && !stackchan::app::first_run::active()) break;
+            vTaskDelay(pdMS_TO_TICKS(50));
         }
         // ASR モードでは重い HMM / unit ボイスをロードしない — その内部/DMA RAM を
         // AFE + マイク I2S DMA に回すため。ウェイクワードの返事「はい」は軽い formant
@@ -1278,6 +1305,12 @@ extern "C" void app_main()
     // LT timekeeper の残り時間を HTTP (GET /api/lt/status) から読めるようにする。
     // タイマー本体は demo_loop が回すので、ここは SharedState.lt の読み出しのみ。
     stackchan::wifi_config::set_lt_state_getter(&lt_state_view);
+
+    // Install the first-run continuation only once every app_main-owned
+    // subsystem is ready. Skip may be tapped while the boot wait is pumping
+    // screen input; set_ready_callback() then fires immediately, but the
+    // conversation task must not race the voice/model initialization above.
+    stackchan::app::first_run::set_ready_callback(start_conversation_once);
 
     stackchan::app::diag_heap("pre-demo_loop");
     stackchan::app::run_demo_loop({

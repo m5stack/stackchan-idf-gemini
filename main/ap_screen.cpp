@@ -321,8 +321,19 @@ bool draw(M5GFX& display)
         display.drawString(pw, column_x, ty);
 
         ty = button_y - 36;
-        display.drawString(first_run ? "Scan with" : "Open setup", column_x, ty);
-        display.drawString(first_run ? "camera" : "in browser", column_x, ty + 17);
+        if (first_run) {
+            // Keep the setup URL inside the narrow right column. The full
+            // string is wider than the column even at this font size.
+            display.setFont(&fonts::lgfxJapanGothic_12);
+            display.drawString("http://", column_x, ty);
+            char host[24];
+            std::snprintf(host, sizeof(host), "%s/", ip);
+            display.drawString(host, column_x, ty + 14);
+        } else {
+            display.setFont(&fonts::lgfxJapanGothic_16);
+            display.drawString("Open setup", column_x, ty);
+            display.drawString("in browser", column_x, ty + 17);
+        }
 
         draw_action_button(display, first_run);
     }
