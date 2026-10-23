@@ -45,6 +45,9 @@ const std::array<SettingDescriptor, kSettingCount> kTable = {{
     // max_len mirrors the HTTP kMax* / BLE plaintext caps for each field.
     str_row("ssid",           "wifi_ssid",  ApplyKind::Staged, &DeviceConfig::wifi_ssid, 32),
     str_row("password",       "wifi_pass",  ApplyKind::Staged, &DeviceConfig::wifi_password, 64, true),
+    str_row("wifi-static-ip", "wifi_static", ApplyKind::Staged, &DeviceConfig::wifi_static_ip, 15),
+    str_row("wifi-gateway",   "wifi_gw",     ApplyKind::Staged, &DeviceConfig::wifi_gateway, 15),
+    str_row("wifi-dns",       "wifi_dns",    ApplyKind::Staged, &DeviceConfig::wifi_dns, 15),
     str_row("api-key",        "openai_key", ApplyKind::Staged, &DeviceConfig::openai_api_key, 256, true),
     str_row("gemini-api-key", "gemini_key", ApplyKind::Staged, &DeviceConfig::gemini_api_key, 256, true),
     str_row("gemini-model",   "gem_model",  ApplyKind::Staged, &DeviceConfig::gemini_model, 64),

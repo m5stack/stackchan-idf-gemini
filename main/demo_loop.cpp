@@ -52,6 +52,9 @@ constexpr const char* kTag = "stackchan";
     const bool jtts_idle_enabled = args.jtts_idle_enabled;
     const bool external_servo_control = args.external_servo_control;
     const ServoLimits& limits = args.limits;
+    auto first_run_active = [&args]() {
+        return args.first_run_active != nullptr && args.first_run_active();
+    };
 
     using namespace stackchan;
 
@@ -189,6 +192,7 @@ constexpr const char* kTag = "stackchan";
     constexpr float kShakeThresholdG = 1.6f;       // |a| ≥ 1.6 g (≈ 0.6 g jerk)
     constexpr std::uint32_t kShakeCooldownMs = 800;
     std::uint32_t next_shake_ms = 0;
+    bool first_run_was_active = false;
 
     for (;;) {
         // Camera session in progress: every In_I2C touch (M5.update's
@@ -205,6 +209,24 @@ constexpr const char* kTag = "stackchan";
         M5.update();
 
         const std::uint32_t now_ms = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+        const bool first_run = first_run_active();
+
+        if (first_run && !first_run_was_active) {
+            // Google Cloud splash has finished and the setup prompt / SoftAP
+            // screen now owns the panel. Stop any boot-time avatar audio or
+            // balloon once; all idle animation below stays gated off.
+            speech.stop();
+            g_state->clear_balloon();
+            balloon_in_flight.store(false, std::memory_order_release);
+            g_state->face.mouth_form.store(-1.0f, std::memory_order_relaxed);
+        } else if (!first_run && first_run_was_active) {
+            // Resume the avatar with a short quiet period rather than firing a
+            // babble / random pose immediately after Skip.
+            next_speech_ms = now_ms + 1500;
+            next_expression_ms = now_ms + kExpressionPeriodMs;
+            next_pose_ms = now_ms + rand_range_ms(kPoseMinMs, kPoseMaxMs);
+        }
+        first_run_was_active = first_run;
 
         // Live-apply speaker_volume_pct changes from the device-UI (BLE /
         // HTTP sinks already apply directly). Cheap atomic compare per
@@ -240,7 +262,7 @@ constexpr const char* kTag = "stackchan";
         // expression rotation immediately (no wait for the 5 s timer).
         // A brief haptic confirms the shake actually registered (handy
         // when the user can't see the avatar on a wrist-worn device).
-        if (now_ms >= next_shake_ms) {
+        if (!first_run && now_ms >= next_shake_ms) {
             float ax = 0, ay = 0, az = 0;
             if (M5.Imu.getAccel(&ax, &ay, &az)) {
                 const float mag = std::sqrt(ax * ax + ay * ay + az * az);
@@ -260,7 +282,7 @@ constexpr const char* kTag = "stackchan";
         // BtnB (StopWatch Blue / G1) — manual expression cycle with haptic
         // confirmation. wasPressed() is false on boards without BtnB so the
         // check is harmless universally.
-        if (M5.BtnB.wasPressed()) {
+        if (!first_run && M5.BtnB.wasPressed()) {
             const int cur = g_state->face.expression.load(std::memory_order_relaxed);
             g_state->face.expression.store((cur + 1) % 6, std::memory_order_relaxed);
             if (g_board != nullptr) (void)g_board->vibrate(30);
@@ -272,7 +294,7 @@ constexpr const char* kTag = "stackchan";
         // boards BtnA either has no role (CoreS3 uses touch only) or is
         // already claimed by atom_status's gesture vocab (polled via
         // screens::poll_inputs above; btn_a_toggles_ui is false there).
-        if (btn_a_toggles_ui && g_board != nullptr && M5.BtnA.wasPressed()) {
+        if (!first_run && btn_a_toggles_ui && g_board != nullptr && M5.BtnA.wasPressed()) {
             app::ui::toggle();
             (void)g_board->vibrate(20);
         }
@@ -280,12 +302,14 @@ constexpr const char* kTag = "stackchan";
         // LT timekeeper: re-configure when BLE/HTTP (or the boot seed) pushed
         // a new config JSON, then consume UI commands / update the countdown /
         // announce the 1-minute warning + overtime through speech + balloon.
-        static std::uint32_t lt_cfg_seen = 0;
-        if (const std::uint32_t v = g_state->lt_config_version(); v != lt_cfg_seen) {
-            lt_cfg_seen = v;
-            lt_timer.configure(g_state->snapshot_lt_config(), g_state);
+        if (!first_run) {
+            static std::uint32_t lt_cfg_seen = 0;
+            if (const std::uint32_t v = g_state->lt_config_version(); v != lt_cfg_seen) {
+                lt_cfg_seen = v;
+                lt_timer.configure(g_state->snapshot_lt_config(), g_state);
+            }
+            lt_timer.tick(*g_state, speech, now_ms);
         }
-        lt_timer.tick(*g_state, speech, now_ms);
 
         // Battery: sample the INA226 every few seconds and fan the result out to
         // the device UI (SharedState) + the BLE / Wi-Fi settings services.
@@ -351,7 +375,7 @@ constexpr const char* kTag = "stackchan";
                 constexpr float kGazeGain = 5.0f;          // DSL multiplier
                                                             // is *3 → 15 px peak
                 bool follow_active = false;
-                if (td.isPressed() && !app::screens::overlay_active()) {
+                if (td.isPressed() && !first_run && !app::screens::overlay_active()) {
                     const float dx = static_cast<float>(td.x) - kCenter;
                     const float dy = static_cast<float>(td.y) - kCenter;
                     const float r  = std::sqrt(dx * dx + dy * dy);
@@ -372,6 +396,15 @@ constexpr const char* kTag = "stackchan";
                     g_state->face.gaze_target_v.store(0.0f, std::memory_order_relaxed);
                 }
             }
+        }
+
+        // First-run onboarding keeps only the input/housekeeping paths above.
+        // Suppress reminders, babble, Wi-Fi balloons, proximity reactions,
+        // nadenade, random poses, and expression cycling while the prompt or
+        // SoftAP QR screen owns the avatar.
+        if (first_run) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
         }
 
         const bool conv_active = g_state->conv.active.load(std::memory_order_relaxed);

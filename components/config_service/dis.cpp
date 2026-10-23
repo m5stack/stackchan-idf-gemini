@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include <config_service/product.hpp>
 #include <esp_app_desc.h>
 #include <esp_log.h>
 
@@ -19,12 +20,17 @@ namespace {
 
 constexpr const char* kTag = "cfg-dis";
 
-// Compile-time identity. Manufacturer / Model / Hardware are fixed for this
-// firmware family; Firmware Revision and Software Revision are filled at
-// init() time from the running app's description.
+// Manufacturer / Hardware are fixed for this firmware family; Firmware
+// Revision and Software Revision are filled at init() time from the running
+// app's description. The model follows the Gemini customer product name
+// without changing the upstream-compatible profile.
 constexpr const char* kManufacturer = "Kenta IDA";
-constexpr const char* kModelNumber = "Stack-chan CoreS3";
 constexpr const char* kHardwareRev = "CoreS3 + SCS0009";
+
+const char* model_number()
+{
+    return gemini_only() ? "StackChan CoreS3" : "Stack-chan CoreS3";
+}
 
 // 0x180A — Device Information Service (Bluetooth SIG-assigned).
 static const ble_uuid16_t kDisUuid = BLE_UUID16_INIT(0x180A);
@@ -52,7 +58,7 @@ static int access_cb(uint16_t /*conn_handle*/, uint16_t /*attr_handle*/,
     }
     const ble_uuid_t* uuid = ctxt->chr->uuid;
     if (ble_uuid_cmp(uuid, &kMfrUuid.u) == 0)   return append(ctxt->om, kManufacturer);
-    if (ble_uuid_cmp(uuid, &kModelUuid.u) == 0) return append(ctxt->om, kModelNumber);
+    if (ble_uuid_cmp(uuid, &kModelUuid.u) == 0) return append(ctxt->om, model_number());
     if (ble_uuid_cmp(uuid, &kHwRevUuid.u) == 0) return append(ctxt->om, kHardwareRev);
     if (ble_uuid_cmp(uuid, &kFwRevUuid.u) == 0) return append(ctxt->om, g_fw_rev);
     if (ble_uuid_cmp(uuid, &kSwRevUuid.u) == 0) return append(ctxt->om, g_sw_rev);
@@ -110,7 +116,7 @@ void init()
         std::snprintf(g_sw_rev, sizeof(g_sw_rev), "unknown");
     }
     ESP_LOGI(kTag, "DIS: %s / %s / %s / fw=%s / sw=%s",
-             kManufacturer, kModelNumber, kHardwareRev, g_fw_rev, g_sw_rev);
+             kManufacturer, model_number(), kHardwareRev, g_fw_rev, g_sw_rev);
 
     int rc = ble_gatts_count_cfg(kSvcs);
     if (rc != 0) {

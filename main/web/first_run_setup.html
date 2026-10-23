@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#087ac1">
+<title>StackChan setup</title>
+<style>
+  :root {
+    --paper: #f5f8fb;
+    --card: #ffffff;
+    --ink: #142334;
+    --muted: #506478;
+    --line: #d9e2ea;
+    --blue: #087ac1;
+    --blue-dark: #05629c;
+    --blue-soft: #e8f4fb;
+    --green: #137a52;
+    --green-soft: #e8f6ef;
+    --amber: #8a5600;
+    --amber-soft: #fff5dc;
+    --red: #b42318;
+    --red-soft: #fdecea;
+    --shadow: 0 1px 2px rgba(20, 35, 52, .07), 0 8px 24px rgba(20, 35, 52, .06);
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--ink);
+    background:
+      linear-gradient(180deg, rgba(8, 122, 193, .08), transparent 190px),
+      var(--paper);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  button, input, select, textarea { font: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: .48; }
+  [hidden] { display: none !important; }
+  .wrap { width: min(100% - 28px, 720px); margin: 0 auto; padding: 22px 0 44px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .mark {
+    width: 42px; height: 42px; flex: none; border-radius: 8px;
+    display: grid; place-items: center; background: #fff;
+    border: 1px solid var(--line); box-shadow: var(--shadow);
+  }
+  .mark svg { width: 34px; height: 24px; display: block; }
+  h1 { margin: 0; font-size: 1.4rem; line-height: 1.2; letter-spacing: -.02em; }
+  .subtitle { margin: 3px 0 0; color: var(--muted); font-size: .9rem; }
+  .stepper {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 16px;
+  }
+  .step-chip {
+    display: flex; align-items: center; gap: 9px; min-width: 0;
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+    background: rgba(255,255,255,.72); color: var(--muted); font-size: .9rem;
+  }
+  .step-chip.current { border-color: var(--blue); color: var(--ink); background: var(--blue-soft); }
+  .step-chip.done { border-color: #b9e1ce; color: var(--green); background: var(--green-soft); }
+  .step-num {
+    width: 24px; height: 24px; flex: none; border-radius: 50%; display: grid;
+    place-items: center; border: 1px solid currentColor; font-size: .78rem; font-weight: 700;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: var(--shadow); padding: clamp(18px, 5vw, 28px);
+  }
+  .card h2 { margin: 0 0 6px; font-size: 1.22rem; letter-spacing: -.01em; }
+  .lead { margin: 0 0 22px; color: var(--muted); }
+  .field { margin-top: 17px; }
+  label { display: block; margin-bottom: 6px; font-weight: 650; }
+  .label-note { color: var(--muted); font-weight: 400; font-size: .88rem; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
+    width: 100%; min-height: 46px; padding: 10px 12px; color: var(--ink);
+    background: #fff; border: 1px solid #b9c6d2; border-radius: 6px; outline: none;
+  }
+  textarea { min-height: 116px; resize: vertical; }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--blue); box-shadow: 0 0 0 3px rgba(8,122,193,.16);
+  }
+  .hint { margin: 6px 0 0; color: var(--muted); font-size: .86rem; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .scan-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .network-list {
+    margin-top: 9px; border: 1px solid var(--line); border-radius: 8px;
+    max-height: 290px; overflow: auto; background: #fbfdff;
+  }
+  .network {
+    width: 100%; min-height: 52px; padding: 10px 12px; display: flex; align-items: center;
+    gap: 10px; border: 0; border-bottom: 1px solid var(--line);
+    background: transparent; color: var(--ink); text-align: left;
+  }
+  .network:last-child { border-bottom: 0; }
+  .network:hover { background: #f2f8fc; }
+  .network[aria-selected=true] { background: var(--blue-soft); box-shadow: inset 3px 0 var(--blue); }
+  .network-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .network-meta { flex: none; color: var(--muted); font-size: .8rem; }
+  .empty-list { padding: 18px 12px; color: var(--muted); text-align: center; }
+  details { margin-top: 18px; border: 1px solid var(--line); border-radius: 8px; background: #fbfdff; }
+  summary { padding: 12px 14px; cursor: pointer; font-weight: 650; }
+  .details-body { padding: 0 14px 14px; border-top: 1px solid var(--line); }
+  .notice {
+    margin: 15px 0 0; padding: 11px 13px; border-radius: 6px;
+    border: 1px solid transparent; font-size: .91rem;
+  }
+  .notice.info { color: #07557f; background: var(--blue-soft); border-color: #c7e5f5; }
+  .notice.ok { color: var(--green); background: var(--green-soft); border-color: #b9e1ce; }
+  .notice.warn { color: var(--amber); background: var(--amber-soft); border-color: #f0d790; }
+  .notice.error { color: var(--red); background: var(--red-soft); border-color: #f3b8b3; }
+  .connect-info { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; }
+  .connect-info dt { color: var(--muted); }
+  .connect-info dd { margin: 0; font-weight: 650; overflow-wrap: anywhere; }
+  .actions { display: flex; justify-content: space-between; gap: 12px; margin-top: 24px; }
+  .actions.end { justify-content: flex-end; }
+  button.primary, button.secondary, button.ghost, button.small {
+    min-height: 44px; padding: 10px 18px; border-radius: 6px; font-weight: 700;
+    border: 1px solid transparent;
+  }
+  button.primary { color: #fff; background: var(--blue); border-color: var(--blue); }
+  button.primary:hover:not(:disabled) { background: var(--blue-dark); }
+  button.secondary { color: var(--blue); background: #fff; border-color: var(--blue); }
+  button.ghost { color: var(--ink); background: #fff; border-color: #b9c6d2; }
+  button.small { min-height: 36px; padding: 6px 11px; font-size: .86rem; }
+  .button-row { display: flex; flex-wrap: wrap; gap: 9px; }
+  .spinner {
+    display: inline-block; width: 15px; height: 15px; margin-right: 7px; vertical-align: -2px;
+    border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+    animation: spin .75s linear infinite;
+  }
+  .test-criteria {
+    margin-top: 12px; padding: 12px 14px; color: var(--muted);
+    background: #f7fafc; border-left: 3px solid var(--blue); font-size: .88rem;
+  }
+  .success-mark {
+    width: 58px; height: 58px; margin: 2px auto 16px; border-radius: 50%;
+    display: grid; place-items: center; color: #fff; background: var(--green); font-size: 2rem;
+  }
+  .center { text-align: center; }
+  .fine { color: var(--muted); font-size: .78rem; }
+  @media (max-width: 520px) {
+    .wrap { width: min(100% - 20px, 720px); padding-top: 14px; }
+    .row { grid-template-columns: 1fr; gap: 0; }
+    .step-chip { padding: 9px 10px; font-size: .82rem; }
+    .actions { flex-direction: column-reverse; }
+    .actions button { width: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="mark" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 39 28" focusable="false">
+        <path fill="#ea4335" d="M21.85,7.41l1,0,2.85-2.85.14-1.21A12.81,12.81,0,0,0,5,9.6a1.55,1.55,0,0,1,1-.06l5.7-.94s.29-.48.44-.45a7.11,7.11,0,0,1,9.73-.74Z"/>
+        <path fill="#4285f4" d="M29.76,9.6a12.84,12.84,0,0,0-3.87-6.24l-4,4A7.11,7.11,0,0,1,24.5,13v.71a3.56,3.56,0,1,1,0,7.12H17.38l-.71.72v4.27l.71.71H24.5A9.26,9.26,0,0,0,29.76,9.6Z"/>
+        <path fill="#34a853" d="M10.25,26.49h7.12v-5.7H10.25a3.54,3.54,0,0,1-1.47-.32l-1,.31L4.91,23.63l-.25,1A9.21,9.21,0,0,0,10.25,26.49Z"/>
+        <path fill="#fbbc05" d="M10.25,8A9.26,9.26,0,0,0,4.66,24.6l4.13-4.13a3.56,3.56,0,1,1,4.71-4.71l4.13-4.13A9.25,9.25,0,0,0,10.25,8Z"/>
+      </svg>
+    </div>
+    <div>
+      <h1>StackChan setup</h1>
+      <p class="subtitle">Connect Wi-Fi, then verify Gemini.</p>
+    </div>
+  </header>
+
+  <nav class="stepper" aria-label="Setup progress">
+    <div class="step-chip current" id="chip-wifi"><span class="step-num">1</span><span>Wi-Fi</span></div>
+    <div class="step-chip" id="chip-gemini"><span class="step-num">2</span><span>Gemini</span></div>
+  </nav>
+
+  <main>
+    <section class="card" id="wifi-step" aria-labelledby="wifi-title">
+      <h2 id="wifi-title">1. Connect Wi-Fi</h2>
+      <p class="lead">Choose the network StackChan should use. You can stay connected to the StackChan setup Wi-Fi while the device joins your home network.</p>
+
+      <div class="scan-head">
+        <div>
+          <div style="font-weight:650">Available networks</div>
+          <div class="hint" id="scan-summary" role="status" aria-live="polite">Starting scan…</div>
+        </div>
+        <button type="button" class="secondary small" id="scan-button">Scan again</button>
+      </div>
+      <div class="network-list" id="network-list" role="listbox" aria-label="Available Wi-Fi networks">
+        <div class="empty-list">Scanning…</div>
+      </div>
+
+      <div class="field">
+        <label for="ssid">Network name (SSID)</label>
+        <input id="ssid" type="text" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Select above or enter manually">
+      </div>
+
+      <div class="field">
+        <label for="password">Wi-Fi password <span class="label-note">(leave blank for open networks)</span></label>
+        <input id="password" type="password" maxlength="64" autocomplete="new-password" spellcheck="false">
+      </div>
+
+      <details id="advanced-network">
+        <summary>Advanced network settings</summary>
+        <div class="details-body">
+          <p class="hint" style="margin-top:12px">Leave Static IP empty to use DHCP. A static address is applied with a /24 subnet mask. Gateway is required for static mode; leave DNS empty to use the gateway.</p>
+          <div class="field">
+            <label for="static-ip">Static IP</label>
+            <input id="static-ip" type="text" maxlength="15" inputmode="decimal" autocomplete="off" placeholder="192.168.1.50">
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="gateway">Gateway</label>
+              <input id="gateway" type="text" maxlength="15" inputmode="decimal" autocomplete="off" placeholder="192.168.1.1">
+            </div>
+            <div class="field">
+              <label for="dns">DNS</label>
+              <input id="dns" type="text" maxlength="15" inputmode="decimal" autocomplete="off" placeholder="Optional">
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <div class="button-row" style="margin-top:18px">
+        <button type="button" class="primary" id="connect-button">Connect</button>
+      </div>
+      <div class="notice info" id="wifi-progress" role="status" aria-live="polite">Select a network, enter its password, then connect.</div>
+      <div class="notice ok" id="wifi-success" role="status" aria-live="polite" hidden>
+        <div style="font-weight:700;margin-bottom:6px">Connected successfully</div>
+        <dl class="connect-info">
+          <dt>Network</dt><dd id="connected-ssid">—</dd>
+          <dt>IPv4</dt><dd id="connected-ip">—</dd>
+          <dt>Addressing</dt><dd id="connected-mode">—</dd>
+        </dl>
+      </div>
+
+      <div class="actions end">
+        <button type="button" class="primary" id="next-button" disabled>Next: Gemini</button>
+      </div>
+    </section>
+
+    <section class="card" id="gemini-step" aria-labelledby="gemini-title" hidden>
+      <h2 id="gemini-title">2. Gemini / chat</h2>
+      <p class="lead">Enter the Gemini API key and chat settings. The values are kept in device RAM until setup finishes.</p>
+
+      <div class="field">
+        <label for="api-key">Gemini API key</label>
+        <input id="api-key" type="password" maxlength="256" autocomplete="new-password" autocapitalize="none" spellcheck="false" placeholder="AIza…">
+        <p class="hint">Stored in the device's non-volatile settings only after a successful test and Finish.</p>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="model">Model</label>
+          <input id="model" type="text" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="voice">Voice</label>
+          <select id="voice">
+            <option value="Aoede">Aoede</option>
+            <option value="Puck">Puck</option>
+            <option value="Charon">Charon</option>
+            <option value="Kore">Kore</option>
+            <option value="Fenrir">Fenrir</option>
+            <option value="Leda">Leda</option>
+            <option value="Orus">Orus</option>
+            <option value="Zephyr">Zephyr</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="system-prompt">System prompt <span class="label-note">(optional)</span></label>
+        <textarea id="system-prompt" maxlength="2048" placeholder="Leave blank to use the built-in StackChan prompt."></textarea>
+      </div>
+
+      <div class="notice info" id="gemini-progress" role="status" aria-live="polite">Test the connection before finishing setup.</div>
+      <div class="notice ok" id="gemini-success" role="status" aria-live="polite" hidden>Gemini connection test passed. Finish setup to save and restart StackChan.</div>
+      <div class="test-criteria">
+        <strong>Pass criterion:</strong> the device opens a secured Gemini Live WebSocket, receives <code>setupComplete</code>, and reaches the <strong>Listening</strong> state within 15 seconds. Editing any field after a pass invalidates the test.
+      </div>
+
+      <div class="actions">
+        <button type="button" class="ghost" id="back-button">Back</button>
+        <div class="button-row">
+          <button type="button" class="secondary" id="test-button">Test connection</button>
+          <button type="button" class="primary" id="finish-button" disabled>Finish &amp; restart</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card center" id="done-step" aria-labelledby="done-title" hidden>
+      <div class="success-mark" aria-hidden="true">✓</div>
+      <h2 id="done-title">Setup complete</h2>
+      <p class="lead" id="done-message">Configuration saved. StackChan is closing the setup Wi-Fi and restarting.</p>
+      <div class="notice ok" role="status" aria-live="polite">The setup Wi-Fi will disappear. Reconnect your phone to your normal Wi-Fi if needed. StackChan will return to its avatar screen.</div>
+      <p class="fine" style="margin-top:18px">You may close this page.</p>
+    </section>
+  </main>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const state = {
+    status: null,
+    selectedSsid: '',
+    wifiVerified: false,
+    wifiDirty: false,
+    testedSnapshot: null,
+    operation: '',
+  };
+
+  function show(el, text, kind) {
+    el.hidden = false;
+    el.className = 'notice ' + (kind || 'info');
+    el.textContent = text;
+  }
+  function hide(el) { el.hidden = true; }
+  function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+  async function requestJSON(url, options) {
+    const opts = Object.assign({ cache: 'no-store' }, options || {});
+    const response = await fetch(url, opts);
+    let body = null;
+    const text = await response.text();
+    if (text) {
+      try { body = JSON.parse(text); } catch { body = { error: text }; }
+    }
+    if (!response.ok) {
+      const error = new Error((body && body.error) || ('HTTP ' + response.status));
+      error.status = response.status;
+      throw error;
+    }
+    return body || {};
+  }
+
+  async function getStatus() {
+    const s = await requestJSON('/api/first-run/status');
+    state.status = s;
+    return s;
+  }
+
+  function expectedWifi(s) {
+    return s && s.wifi_state === 'connected' && s.wifi_connected === true && !!s.wifi_ip;
+  }
+
+  function updateNext() {
+    const s = state.status;
+    const sameSsid = !!state.selectedSsid && s && s.wifi_ssid === state.selectedSsid;
+    $('next-button').disabled = !(state.wifiVerified && expectedWifi(s) && sameSsid && !state.wifiDirty);
+  }
+
+  function setWifiDirty() {
+    state.wifiDirty = true;
+    state.wifiVerified = false;
+    updateNext();
+    // The server invalidates the Gemini test whenever Wi-Fi changes. Mirror
+    // that here so a stale success card cannot leave Finish enabled.
+    invalidateTest();
+  }
+
+  function networkButton(network) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'network';
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', 'false');
+    button.dataset.ssid = network.ssid;
+    const name = document.createElement('span');
+    name.className = 'network-name';
+    name.textContent = network.ssid;
+    const meta = document.createElement('span');
+    meta.className = 'network-meta';
+    meta.textContent = (network.secure ? 'Secured' : 'Open') + ' · ' + network.rssi + ' dBm';
+    button.append(name, meta);
+    button.addEventListener('click', () => selectNetwork(network.ssid));
+    return button;
+  }
+
+  function selectNetwork(ssid) {
+    state.selectedSsid = ssid;
+    $('ssid').value = ssid;
+    for (const item of document.querySelectorAll('.network')) {
+      const selected = item.dataset.ssid === ssid;
+      item.setAttribute('aria-selected', selected ? 'true' : 'false');
+    }
+    setWifiDirty();
+    hide($('wifi-success'));
+    show($('wifi-progress'), 'Network selected. Enter its password and connect.', 'info');
+  }
+
+  function renderNetworks(networks) {
+    const list = $('network-list');
+    list.replaceChildren();
+    if (!networks || networks.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-list';
+      empty.textContent = 'No networks found. Enter the SSID manually below.';
+      list.append(empty);
+      $('scan-summary').textContent = 'No networks found';
+      return;
+    }
+    for (const network of networks) list.append(networkButton(network));
+    $('scan-summary').textContent = networks.length + ' network' + (networks.length === 1 ? '' : 's') + ' found';
+    if (state.selectedSsid) selectNetwork(state.selectedSsid);
+  }
+
+  async function scan() {
+    const button = $('scan-button');
+    button.disabled = true;
+    $('scan-summary').textContent = 'Scanning…';
+    try {
+      await requestJSON('/api/first-run/scan', { method: 'POST' });
+      for (let i = 0; i < 40; ++i) {
+        await sleep(500);
+        const s = await getStatus();
+        if (s.scan_state === 'done') {
+          renderNetworks(s.networks);
+          return;
+        }
+        if (s.scan_state === 'error') throw new Error(s.scan_error || 'Wi-Fi scan failed.');
+      }
+      throw new Error('Wi-Fi scan timed out.');
+    } catch (e) {
+      $('scan-summary').textContent = 'Scan failed';
+      const list = $('network-list');
+      list.replaceChildren();
+      const empty = document.createElement('div');
+      empty.className = 'empty-list';
+      empty.textContent = e.message;
+      list.append(empty);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function connectWifi() {
+    const ssid = $('ssid').value.trim();
+    const password = $('password').value;
+    const staticIp = $('static-ip').value.trim();
+    const gateway = $('gateway').value.trim();
+    const dns = $('dns').value.trim();
+    if (!ssid) {
+      show($('wifi-progress'), 'Select a network or enter an SSID first.', 'error');
+      return;
+    }
+    state.selectedSsid = ssid;
+    state.wifiVerified = false;
+    state.wifiDirty = true;
+    updateNext();
+    invalidateTest('Wi-Fi changed. Test the Gemini connection again before finishing.');
+    hide($('wifi-success'));
+    $('connect-button').disabled = true;
+    $('scan-button').disabled = true;
+    show($('wifi-progress'), 'Connecting… This can take up to 20 seconds.', 'info');
+    try {
+      await requestJSON('/api/first-run/wifi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ssid, password, static_ip: staticIp, gateway, dns }),
+      });
+      for (let i = 0; i < 60; ++i) {
+        await sleep(500);
+        const s = await getStatus();
+        if (expectedWifi(s)) {
+          state.wifiVerified = true;
+          state.wifiDirty = false;
+          $('connected-ssid').textContent = s.wifi_ssid || ssid;
+          $('connected-ip').textContent = s.wifi_ip;
+          $('connected-mode').textContent = staticIp ? 'Static · /24' : 'DHCP';
+          hide($('wifi-progress'));
+          $('wifi-success').hidden = false;
+          updateNext();
+          return;
+        }
+        if (s.wifi_state === 'error') throw new Error(s.wifi_error || 'Could not connect to Wi-Fi.');
+      }
+      throw new Error('Wi-Fi connection timed out.');
+    } catch (e) {
+      show($('wifi-progress'), e.message, 'error');
+    } finally {
+      $('connect-button').disabled = false;
+      $('scan-button').disabled = false;
+    }
+  }
+
+  function updateSteps(step) {
+    $('wifi-step').hidden = step !== 1;
+    $('gemini-step').hidden = step !== 2;
+    $('done-step').hidden = step !== 3;
+    const chips = [$('chip-wifi'), $('chip-gemini')];
+    for (const chip of chips) chip.classList.remove('current', 'done');
+    if (step === 1) chips[0].classList.add('current');
+    if (step === 2) {
+      chips[0].classList.add('done');
+      chips[1].classList.add('current');
+    }
+    if (step === 3) {
+      chips[0].classList.add('done');
+      chips[1].classList.add('done');
+    }
+    window.scrollTo(0, 0);
+  }
+
+  function chatSnapshot() {
+    return {
+      api_key: $('api-key').value,
+      model: $('model').value.trim(),
+      voice: $('voice').value,
+      system_prompt: $('system-prompt').value,
+    };
+  }
+
+  function sameSnapshot(a, b) {
+    return !!a && !!b && a.api_key === b.api_key && a.model === b.model &&
+      a.voice === b.voice && a.system_prompt === b.system_prompt;
+  }
+
+  function invalidateTest(message) {
+    state.testedSnapshot = null;
+    $('finish-button').disabled = true;
+    hide($('gemini-success'));
+    if (message) show($('gemini-progress'), message, 'info');
+  }
+
+  function validateChatFields(snapshot) {
+    if (!snapshot.api_key) return 'Enter the Gemini API key.';
+    if (!snapshot.model) return 'Enter a Gemini model.';
+    if (!snapshot.voice) return 'Select a voice.';
+    return '';
+  }
+
+  async function testGemini() {
+    const snapshot = chatSnapshot();
+    const fieldError = validateChatFields(snapshot);
+    if (fieldError) {
+      show($('gemini-progress'), fieldError, 'error');
+      return;
+    }
+    state.testedSnapshot = null;
+    $('finish-button').disabled = true;
+    hide($('gemini-success'));
+    $('test-button').disabled = true;
+    setChatDisabled(true);
+    show($('gemini-progress'), 'Testing the secured Gemini Live connection…', 'info');
+    try {
+      await requestJSON('/api/first-run/gemini/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(snapshot),
+      });
+      for (let i = 0; i < 40; ++i) {
+        await sleep(500);
+        const s = await getStatus();
+        if (s.gemini_state === 'success' && s.gemini_test_ok === true) {
+          if (!sameSnapshot(snapshot, chatSnapshot())) {
+            throw new Error('Chat settings changed during the test. Test again.');
+          }
+          state.testedSnapshot = snapshot;
+          hide($('gemini-progress'));
+          show($('gemini-success'), 'Gemini connection test passed. Finish setup to save and restart StackChan.', 'ok');
+          $('finish-button').disabled = false;
+          return;
+        }
+        if (s.gemini_state === 'error') throw new Error(s.gemini_error || 'Gemini connection test failed.');
+      }
+      throw new Error('Gemini connection test timed out.');
+    } catch (e) {
+      state.testedSnapshot = null;
+      show($('gemini-progress'), e.message, 'error');
+    } finally {
+      $('test-button').disabled = false;
+      setChatDisabled(false);
+    }
+  }
+
+  function setChatDisabled(disabled) {
+    for (const id of ['api-key', 'model', 'voice', 'system-prompt']) $(id).disabled = disabled;
+    $('back-button').disabled = disabled;
+  }
+
+  function showSetupComplete() {
+    $('api-key').value = '';
+    state.testedSnapshot = null;
+    $('done-message').textContent = 'Configuration saved. StackChan is closing the setup Wi-Fi and restarting.';
+    updateSteps(3);
+  }
+
+  async function waitForFinishConfirmation() {
+    let networkFailures = 0;
+    for (let i = 0; i < 32; ++i) {
+      await sleep(250);
+      try {
+        const s = await getStatus();
+        networkFailures = 0;
+        if (s.complete === true) return true;
+        if (s.finish_pending === false && s.gemini_state === 'error') {
+          const error = new Error(s.gemini_error || 'The device could not save the setup. Please retry.');
+          error.deviceFailure = true;
+          throw error;
+        }
+      } catch (e) {
+        if (e.deviceFailure) throw e;
+        if (e.status === 404 || e.status === 409) return true;
+        if (e.status) throw e;
+        // A transport error normally means the setup AP has already closed.
+        // Require a few consecutive failures so a transient browser retry is
+        // not reported as success.
+        if (++networkFailures >= 3) return true;
+      }
+    }
+    throw new Error('Timed out waiting for the device to finish setup. Reconnect to the setup Wi-Fi and retry.');
+  }
+
+  async function finishSetup() {
+    const snapshot = chatSnapshot();
+    if (!sameSnapshot(snapshot, state.testedSnapshot)) {
+      invalidateTest('Chat settings changed after the successful test. Test again.');
+      return;
+    }
+    $('finish-button').disabled = true;
+    $('test-button').disabled = true;
+    $('back-button').disabled = true;
+    show($('gemini-progress'), 'Saving configuration and shutting down the setup Wi-Fi…', 'info');
+    try {
+      await requestJSON('/api/first-run/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(snapshot),
+      });
+      await waitForFinishConfirmation();
+      showSetupComplete();
+    } catch (e) {
+      // A rejected finish (including an NVS save failure) invalidates the
+      // server-side test result, so require a fresh test before retrying.
+      invalidateTest(e.message);
+      $('gemini-progress').className = 'notice error';
+      $('test-button').disabled = false;
+      $('back-button').disabled = false;
+    }
+  }
+
+  async function initialize() {
+    try {
+      const s = await getStatus();
+      if (s.default_model) $('model').value = s.default_model;
+      if (s.default_voice) $('voice').value = s.default_voice;
+      if (s.system_prompt) $('system-prompt').value = s.system_prompt;
+      if (s.static_ip) $('static-ip').value = s.static_ip;
+      if (s.gateway) $('gateway').value = s.gateway;
+      if (s.dns) $('dns').value = s.dns;
+      if (s.complete) {
+        updateSteps(3);
+        return;
+      }
+    } catch (e) {
+      show($('wifi-progress'), e.message, 'error');
+    }
+    scan();
+  }
+
+  $('scan-button').addEventListener('click', scan);
+  $('connect-button').addEventListener('click', connectWifi);
+  $('ssid').addEventListener('input', () => {
+    state.selectedSsid = $('ssid').value.trim();
+    setWifiDirty();
+    hide($('wifi-success'));
+  });
+  for (const id of ['password', 'static-ip', 'gateway', 'dns']) {
+    $(id).addEventListener('input', setWifiDirty);
+  }
+  $('next-button').addEventListener('click', () => {
+    if (!$('next-button').disabled) updateSteps(2);
+  });
+  $('back-button').addEventListener('click', () => updateSteps(1));
+  $('test-button').addEventListener('click', testGemini);
+  $('finish-button').addEventListener('click', finishSetup);
+  for (const id of ['api-key', 'model', 'voice', 'system-prompt']) {
+    $(id).addEventListener('input', () => invalidateTest('Settings changed. Test the Gemini connection again before finishing.'));
+    $(id).addEventListener('change', () => invalidateTest('Settings changed. Test the Gemini connection again before finishing.'));
+  }
+
+  initialize();
+})();
+</script>
+</body>
+</html>

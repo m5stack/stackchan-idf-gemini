@@ -4,6 +4,7 @@
 #pragma once
 
 #include <esp_http_server.h>
+#include <esp_netif.h>
 
 namespace stackchan::app::captive_portal {
 
@@ -17,6 +18,13 @@ namespace stackchan::app::captive_portal {
 // Idempotent. Starts a low-priority task on first call.
 void start_dns();
 void stop_dns();
+
+// Publish the setup-page URI through DHCP option 114 (RFC 8910). Phones use
+// this immediately after joining the SoftAP to open the captive portal without
+// requiring the user to discover the AP address manually. Call after the AP
+// netif and DHCP server exist. The URI storage is owned by this module and
+// remains valid for the lifetime of the DHCP server.
+void configure_dhcp_captive_portal(esp_netif_t* ap_netif);
 
 // Register a catch-all HTTP handler on the wifi_config server that 302s
 // every unknown path to the settings page. Must be called *after*

@@ -141,7 +141,7 @@ void poll_button()
         g_ap_press_fired = true;
         const bool overlay_up = g_active.load(std::memory_order_relaxed);
         if (!overlay_up || ap_screen::active()) {
-            if (wifi_ap_active()) {
+            if (wifi_ap_active() && !wifi_ap_first_run()) {
                 wifi_disable_ap_mode();
             } else {
                 wifi_enable_ap_mode();

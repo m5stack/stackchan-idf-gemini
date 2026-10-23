@@ -1978,6 +1978,13 @@
     "閉": "closed",
     "開": "Open",
     "頭": "head",
-    "風": "wind"
+    "風": "wind",
+    "静的 IP 設定": "Static IP",
+    "静的 IP アドレス": "Static IP address",
+    "ゲートウェイ": "Gateway",
+    "DNS (任意)": "DNS (optional)",
+    "（空欄 = DHCP）": " (blank = DHCP)",
+    "空欄 = ゲートウェイ": "Blank = gateway",
+    "空欄なら DHCP を使用します。静的 IP は /24 サブネットで設定され、ゲートウェイは必須です。\n    DNS が空欄の場合はゲートウェイを使用します。保存後の再起動で反映されます。\n  ": "Leave blank to use DHCP. Static IP uses a /24 subnet and requires a gateway. If DNS is blank, the gateway is used. Takes effect after saving and rebooting.\n  "
   }
 }

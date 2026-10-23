@@ -20,6 +20,7 @@ namespace {
 
 constexpr const char* kTag    = "captive";
 constexpr std::uint16_t kDnsPort = 53;
+char kCaptivePortalUri[] = "http://192.168.4.1/";
 // Hard-coded AP IP — esp_netif default for `default_wifi_ap` is 192.168.4.1
 // and we don't reconfigure it. Encoded big-endian for the DNS A-record body.
 constexpr std::uint8_t kApIpBytes[4] = {192, 168, 4, 1};
@@ -27,10 +28,10 @@ constexpr std::uint8_t kApIpBytes[4] = {192, 168, 4, 1};
 std::atomic<bool> g_dns_run{false};
 TaskHandle_t g_dns_task = nullptr;
 
-// Minimal DNS responder: copies the question section verbatim and appends a
-// single A answer pointing to the AP IP. Ignores QTYPE/QCLASS (returns the
-// same A record for everything — sufficient for captive-portal probing
-// which is always A on common Apple/Microsoft/Google host names).
+// Minimal DNS responder: copies the question section verbatim and answers A
+// queries with the AP IP. Other query types get a valid empty response
+// (NODATA), so clients fall back to IPv4 instead of rejecting a mismatched A
+// record on an AAAA question.
 void dns_task(void*)
 {
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
@@ -76,28 +77,34 @@ void dns_task(void*)
             q += label_len + 1;
         }
         if (q >= n) continue;
+        const int qtype_offset = q + 1;
         q += 1 + 4; // null terminator + QTYPE + QCLASS
         if (q > n) continue;
+        const std::uint16_t qtype = static_cast<std::uint16_t>(
+            (buf[qtype_offset] << 8) | buf[qtype_offset + 1]);
+        const bool answer_a = qtype == 1 || qtype == 255; // A or ANY
 
-        // Build response: copy request, flip header to response, set
-        // ANCOUNT=1, append a single compressed-name A record pointing
-        // at the AP IP with TTL 60s.
+        // Build response: copy request, flip header to response, then append
+        // one compressed-name A record for A/ANY queries only.
         std::uint8_t resp[512];
         std::memcpy(resp, buf, q);
-        resp[2] = 0x81; resp[3] = 0x80; // QR=1, RD=1, RA=1, RCODE=0
-        resp[6] = 0x00; resp[7] = 0x01; // ANCOUNT = 1
+        resp[2] = static_cast<std::uint8_t>(0x80 | (buf[2] & 0x01)); // QR=1, keep RD
+        resp[3] = 0x80; // RA=1, RCODE=0
+        resp[6] = 0x00; resp[7] = answer_a ? 0x01 : 0x00; // ANCOUNT
         resp[8] = 0x00; resp[9] = 0x00; // NSCOUNT = 0
         resp[10] = 0x00; resp[11] = 0x00; // ARCOUNT = 0
 
         int a = q;
-        resp[a++] = 0xC0; resp[a++] = 0x0C;        // name pointer → offset 12
-        resp[a++] = 0x00; resp[a++] = 0x01;        // TYPE A
-        resp[a++] = 0x00; resp[a++] = 0x01;        // CLASS IN
-        resp[a++] = 0x00; resp[a++] = 0x00;        // TTL hi
-        resp[a++] = 0x00; resp[a++] = 0x3C;        // TTL lo = 60
-        resp[a++] = 0x00; resp[a++] = 0x04;        // RDLENGTH = 4
-        resp[a++] = kApIpBytes[0]; resp[a++] = kApIpBytes[1];
-        resp[a++] = kApIpBytes[2]; resp[a++] = kApIpBytes[3];
+        if (answer_a) {
+            resp[a++] = 0xC0; resp[a++] = 0x0C;        // name pointer → offset 12
+            resp[a++] = 0x00; resp[a++] = 0x01;        // TYPE A
+            resp[a++] = 0x00; resp[a++] = 0x01;        // CLASS IN
+            resp[a++] = 0x00; resp[a++] = 0x00;        // TTL hi
+            resp[a++] = 0x00; resp[a++] = 0x3C;        // TTL lo = 60
+            resp[a++] = 0x00; resp[a++] = 0x04;        // RDLENGTH = 4
+            resp[a++] = kApIpBytes[0]; resp[a++] = kApIpBytes[1];
+            resp[a++] = kApIpBytes[2]; resp[a++] = kApIpBytes[3];
+        }
 
         sendto(sock, resp, a, 0,
                reinterpret_cast<sockaddr*>(&src), sl);
@@ -109,6 +116,7 @@ void dns_task(void*)
 
 esp_err_t catchall_handler(httpd_req_t* req, httpd_err_code_t /*err*/)
 {
+    ESP_LOGI(kTag, "portal probe %s -> %s", req->uri, kCaptivePortalUri);
     // NOTE (learned the hard way — do NOT re-try the 204 approach):
     // We once special-cased Android's probes (`/generate_204`, `/gen_204`) to
     // return `204 No Content`, hoping Android would see "network is open" and
@@ -132,7 +140,7 @@ esp_err_t catchall_handler(httpd_req_t* req, httpd_err_code_t /*err*/)
     // captive sheet directly to settings_wifi.html. The browser also gets
     // routed there if the user typed any random URL after joining the AP.
     httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    httpd_resp_set_hdr(req, "Location", kCaptivePortalUri);
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_sendstr(req, "stackchan AP — see http://192.168.4.1/");
     return ESP_OK;
@@ -161,6 +169,35 @@ void stop_dns()
     // Task self-deletes on next loop iteration after the 500 ms recv
     // timeout fires. Don't vTaskDelete here — letting it exit cleanly
     // avoids leaking the bound socket.
+}
+
+void configure_dhcp_captive_portal(esp_netif_t* ap_netif)
+{
+    if (ap_netif == nullptr) return;
+
+    const esp_err_t stop_err = esp_netif_dhcps_stop(ap_netif);
+    if (stop_err != ESP_OK && stop_err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+        ESP_LOGW(kTag, "DHCP stop for captive-portal option failed: %s",
+                 esp_err_to_name(stop_err));
+    }
+
+    const esp_err_t set_err = esp_netif_dhcps_option(
+        ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI,
+        kCaptivePortalUri, std::strlen(kCaptivePortalUri));
+    if (set_err != ESP_OK) {
+        ESP_LOGW(kTag, "DHCP captive-portal URI option failed: %s",
+                 esp_err_to_name(set_err));
+    }
+
+    const esp_err_t start_err = esp_netif_dhcps_start(ap_netif);
+    if (start_err != ESP_OK && start_err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED) {
+        ESP_LOGE(kTag, "DHCP restart after captive-portal option failed: %s",
+                 esp_err_to_name(start_err));
+        return;
+    }
+    if (set_err == ESP_OK) {
+        ESP_LOGI(kTag, "DHCP captive-portal URI=%s", kCaptivePortalUri);
+    }
 }
 
 void register_http_catchall(httpd_handle_t server)

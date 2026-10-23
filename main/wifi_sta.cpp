@@ -3,9 +3,13 @@
 
 #include "wifi_sta.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 #include <esp_event.h>
 #include <esp_log.h>
@@ -20,6 +24,7 @@
 #include <M5Unified.h>
 
 #include <config_service/config_service.hpp>
+#include <config_service/product.hpp>
 #include <wifi_config_service/wifi_config_service.hpp>
 
 #include "captive_portal.hpp"
@@ -31,8 +36,8 @@ namespace {
 constexpr const char* kTag = "wifi-sta";
 
 // Bounded copy into a fixed field that always NUL-terminates. Used for the
-// esp_wifi AP config's ssid/password byte arrays. strncpy(dst, src, sizeof-1)
-// and snprintf both trip GCC 14's -Werror=stringop-truncation /
+// esp_wifi AP/STA config's byte arrays. strncpy(dst, src, sizeof-1) and
+// snprintf both trip GCC 14's -Werror=stringop-truncation /
 // format-truncation under IDF 5.5; an explicit memcpy of a clamped length
 // followed by a NUL is accepted on both IDF 5.4 (GCC 13) and 5.5 (GCC 14).
 void copy_field(std::uint8_t* dst, std::size_t cap, const char* src)
@@ -45,77 +50,207 @@ void copy_field(std::uint8_t* dst, std::size_t cap, const char* src)
 
 std::atomic<bool> g_connected{false};
 std::atomic<bool> g_ap_active{false};
+std::atomic<bool> g_ap_first_run{false};
+std::atomic<bool> g_setup_mode{false};
+std::atomic<bool> g_wifi_inited{false};
+
 // Cached AP credentials so wifi_ap_info() can serve the on-device QR screen
 // without re-querying the driver. Derived from ESP_MAC_WIFI_STA.
 char g_ap_ssid[33] = {0};
 char g_ap_pw[33]   = {0};
 char g_ap_ip[16]   = "192.168.4.1";
+esp_netif_t* g_sta_netif = nullptr;
 esp_netif_t* g_ap_netif = nullptr;
+
 // Snapshot of the config used at boot — held so the HTTP settings service
-// can be brought up on the *first* IP_EVENT_STA_GOT_IP with the same view
-// of NVS that the BLE service registered. After the first start it stays
-// up across reconnects (wifi_config_service::start ignores re-entry).
+// can be brought up on the first IP_EVENT_STA_GOT_IP with the same view of
+// NVS that the BLE service registered. After the first start it stays up
+// across reconnects (wifi_config_service::start ignores re-entry).
 const config::DeviceConfig* g_boot_cfg = nullptr;
+char g_configured_ssid[33] = {0};
 
 // One-shot timer that defers the next esp_wifi_connect() while the
 // provisioning AP is up. Each STA connect attempt runs a full-channel scan
 // (~5 s) that pulls the shared radio off the AP's channel — with the
 // immediate-retry loop the AP beacons go silent most of the time and joined
-// clients get kicked within seconds (observed on HW when the stored SSID no
-// longer exists, which is exactly the situation provisioning is for). While
-// the AP is active the retry is throttled to this period instead — and
-// paused entirely while a client is associated (the off-channel scan makes
-// the AP fail its SA-query keepalive and disassoc the client mid-page-load;
-// also observed on HW).
+// clients get kicked within seconds. While the AP is active the retry is
+// throttled to this period, and paused entirely while a client is associated.
 constexpr std::uint64_t kApModeStaRetryUs = 30 * 1000 * 1000;
 esp_timer_handle_t g_sta_retry_timer = nullptr;
 std::atomic<int> g_ap_client_count{0};
 
+bool can_auto_connect()
+{
+    if (g_setup_mode.load(std::memory_order_acquire)) return false;
+    if (g_configured_ssid[0] == '\0') return false;
+    if (g_ap_active.load(std::memory_order_acquire) &&
+        g_ap_client_count.load(std::memory_order_acquire) > 0) {
+        return false;
+    }
+    return true;
+}
+
+void stop_retry_timer()
+{
+    if (g_sta_retry_timer != nullptr) {
+        (void)esp_timer_stop(g_sta_retry_timer);
+    }
+}
+
 void sta_retry_timer_cb(void*)
 {
-    esp_wifi_connect();
+    if (can_auto_connect()) {
+        (void)esp_wifi_connect();
+    }
+}
+
+bool valid_ipv4(const std::string& text, esp_ip4_addr_t* out)
+{
+    if (text.empty()) return false;
+    esp_ip4_addr_t parsed{};
+    if (esp_netif_str_to_ip4(text.c_str(), &parsed) != ESP_OK || parsed.addr == 0) {
+        return false;
+    }
+    if (out != nullptr) *out = parsed;
+    return true;
+}
+
+esp_err_t start_dhcp()
+{
+    if (g_sta_netif == nullptr) return ESP_ERR_INVALID_STATE;
+    const esp_err_t err = esp_netif_dhcpc_start(g_sta_netif);
+    return (err == ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED) ? ESP_OK : err;
+}
+
+// Apply the optional static IPv4 configuration. Empty static_ip selects
+// DHCP. Static configuration uses a /24 mask, requires a gateway, and uses
+// the gateway as DNS when dns is empty. Malformed saved settings fall back
+// to DHCP rather than leaving the interface unreachable.
+bool apply_sta_ipv4(const std::string& static_ip, const std::string& gateway,
+                    const std::string& dns)
+{
+    if (g_sta_netif == nullptr) return false;
+
+    if (static_ip.empty()) {
+        stop_retry_timer();
+        const esp_err_t err = start_dhcp();
+        if (err != ESP_OK) {
+            ESP_LOGW(kTag, "DHCP start failed: %s", esp_err_to_name(err));
+        }
+        return true;
+    }
+
+    esp_ip4_addr_t ip{};
+    esp_ip4_addr_t gw{};
+    if (!valid_ipv4(static_ip, &ip) || !valid_ipv4(gateway, &gw)) {
+        ESP_LOGW(kTag, "invalid static IPv4 config (ip=%s gateway=%s) — falling back to DHCP",
+                 static_ip.c_str(), gateway.c_str());
+        (void)start_dhcp();
+        return false;
+    }
+
+    esp_ip4_addr_t dns_addr = gw;
+    if (!dns.empty() && !valid_ipv4(dns, &dns_addr)) {
+        ESP_LOGW(kTag, "invalid static DNS '%s' — using gateway", dns.c_str());
+        dns_addr = gw;
+    }
+
+    const esp_err_t stop_err = esp_netif_dhcpc_stop(g_sta_netif);
+    if (stop_err != ESP_OK && stop_err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+        ESP_LOGW(kTag, "DHCP stop failed: %s — falling back to DHCP", esp_err_to_name(stop_err));
+        (void)start_dhcp();
+        return false;
+    }
+
+    esp_netif_ip_info_t info{};
+    info.ip = ip;
+    info.gw = gw;
+    (void)esp_netif_str_to_ip4("255.255.255.0", &info.netmask);
+    esp_err_t err = esp_netif_set_ip_info(g_sta_netif, &info);
+    if (err != ESP_OK) {
+        ESP_LOGW(kTag, "set static IPv4 failed: %s — falling back to DHCP", esp_err_to_name(err));
+        (void)start_dhcp();
+        return false;
+    }
+
+    esp_netif_dns_info_t dns_info{};
+    dns_info.ip.type = ESP_IPADDR_TYPE_V4;
+    dns_info.ip.u_addr.ip4 = dns_addr;
+    err = esp_netif_set_dns_info(g_sta_netif, ESP_NETIF_DNS_MAIN, &dns_info);
+    if (err != ESP_OK) {
+        ESP_LOGW(kTag, "set static DNS failed: %s", esp_err_to_name(err));
+    }
+    ESP_LOGI(kTag, "STA static IPv4 " IPSTR "/24 gateway " IPSTR " dns " IPSTR,
+             IP2STR(&ip), IP2STR(&gw), IP2STR(&dns_addr));
+    return true;
+}
+
+void schedule_retry_if_allowed()
+{
+    if (g_sta_retry_timer == nullptr || !can_auto_connect()) return;
+    stop_retry_timer();
+    (void)esp_timer_start_once(g_sta_retry_timer, kApModeStaRetryUs);
 }
 
 void event_handler(void* /*arg*/, esp_event_base_t base, int32_t id, void* data)
 {
     if (base == WIFI_EVENT) {
         if (id == WIFI_EVENT_STA_START) {
-            esp_wifi_connect();
+            if (can_auto_connect()) {
+                (void)esp_wifi_connect();
+            } else {
+                ESP_LOGI(kTag, "STA started; automatic connect suppressed (%s)",
+                         g_setup_mode.load(std::memory_order_acquire) ? "setup mode"
+                                                                      : "no SSID");
+            }
         } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
             g_connected.store(false, std::memory_order_release);
             config::notify_wifi_connected(false);
             wifi_config::notify_wifi_connected(false);
-            if (g_ap_active.load(std::memory_order_acquire) &&
-                g_sta_retry_timer != nullptr) {
-                esp_timer_stop(g_sta_retry_timer);
+
+            if (g_setup_mode.load(std::memory_order_acquire)) {
+                ESP_LOGW(kTag, "STA disconnected in setup mode; retry paused");
+            } else if (g_configured_ssid[0] == '\0') {
+                ESP_LOGW(kTag, "STA disconnected; no SSID configured, retry paused");
+            } else if (g_ap_active.load(std::memory_order_acquire)) {
+                stop_retry_timer();
                 if (g_ap_client_count.load(std::memory_order_acquire) > 0) {
                     ESP_LOGW(kTag, "disconnected — AP client associated, STA retry paused");
                 } else {
                     ESP_LOGW(kTag, "disconnected — AP mode active, next retry in %llu s",
                              kApModeStaRetryUs / 1000000ULL);
-                    esp_timer_start_once(g_sta_retry_timer, kApModeStaRetryUs);
+                    (void)esp_timer_start_once(g_sta_retry_timer, kApModeStaRetryUs);
                 }
             } else {
                 ESP_LOGW(kTag, "disconnected, retrying");
-                esp_wifi_connect();
+                (void)esp_wifi_connect();
             }
         } else if (id == WIFI_EVENT_AP_STACONNECTED) {
             // A provisioning client joined — give it quiet air: no STA
             // scans until every client leaves.
+            const auto* event = static_cast<wifi_event_ap_staconnected_t*>(data);
             g_ap_client_count.fetch_add(1, std::memory_order_acq_rel);
-            if (g_sta_retry_timer != nullptr) esp_timer_stop(g_sta_retry_timer);
+            stop_retry_timer();
+            ESP_LOGI(kTag, "AP client joined: " MACSTR " aid=%u",
+                     MAC2STR(event->mac), static_cast<unsigned>(event->aid));
         } else if (id == WIFI_EVENT_AP_STADISCONNECTED) {
+            const auto* event = static_cast<wifi_event_ap_stadisconnected_t*>(data);
             const int left = g_ap_client_count.fetch_sub(1, std::memory_order_acq_rel) - 1;
+            ESP_LOGW(kTag, "AP client left: " MACSTR " reason=%u remaining=%d",
+                     MAC2STR(event->mac), static_cast<unsigned>(event->reason),
+                     left > 0 ? left : 0);
             if (left <= 0) {
                 g_ap_client_count.store(0, std::memory_order_release);
                 if (g_ap_active.load(std::memory_order_acquire) &&
-                    !g_connected.load(std::memory_order_acquire) &&
-                    g_sta_retry_timer != nullptr) {
-                    esp_timer_stop(g_sta_retry_timer);
-                    esp_timer_start_once(g_sta_retry_timer, kApModeStaRetryUs);
+                    !g_connected.load(std::memory_order_acquire)) {
+                    schedule_retry_if_allowed();
                 }
             }
         }
+    } else if (base == IP_EVENT && id == IP_EVENT_AP_STAIPASSIGNED) {
+        const auto* event = static_cast<ip_event_ap_staipassigned_t*>(data);
+        ESP_LOGI(kTag, "AP client got IP: " IPSTR " mac=" MACSTR,
+                 IP2STR(&event->ip), MAC2STR(event->mac));
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const auto* event = static_cast<ip_event_got_ip_t*>(data);
         ESP_LOGI(kTag, "got IP: " IPSTR, IP2STR(&event->ip_info.ip));
@@ -134,13 +269,8 @@ void event_handler(void* /*arg*/, esp_event_base_t base, int32_t id, void* data)
         }
         wifi_config::notify_wifi_connected(true);
 
-        // SNTP — start once on the first connection. esp_netif_sntp_init
-        // sets up the lwIP SNTP client in background; it will write the
-        // system time as soon as a response comes back. We also push the
-        // synced time into M5.Rtc once it's valid so the watch keeps
-        // sensible time across short power loss (RX8130CE is battery-
-        // backed via the M5PM1 PMIC). JST is hardcoded — no UI to pick
-        // a TZ on a wearable, and the dev unit lives in JP.
+        // SNTP — start once on the first connection. JST is the product's
+        // default; the time is mirrored into the battery-backed RTC.
         static bool sntp_started = false;
         if (!sntp_started) {
             sntp_started = true;
@@ -149,10 +279,6 @@ void event_handler(void* /*arg*/, esp_event_base_t base, int32_t id, void* data)
             esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
             cfg.start = true;
             esp_netif_sntp_init(&cfg);
-            // Mirror system time into M5.Rtc once SNTP has converged.
-            // Block briefly here to give the first sync a chance; if it
-            // hasn't arrived in 5 s we move on and the next reconnect
-            // will retry. ESP_OK = synced, ERR_TIMEOUT = not yet.
             if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(5000)) == ESP_OK) {
                 time_t now = 0;
                 ::time(&now);
@@ -189,16 +315,13 @@ void wifi_start(const config::DeviceConfig& cfg)
         ESP_ERROR_CHECK(esp_event_loop_create_default());
         loop_started = true;
     }
-    esp_netif_create_default_wifi_sta();
+    if (g_sta_netif == nullptr) {
+        g_sta_netif = esp_netif_create_default_wifi_sta();
+    }
 
     wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
-    // 会話 / ASR モードは内部 RAM が最も厳しい (TLS + WebSocket + マイク DMA)。
-    // Wi-Fi の静的 RX/TX バッファは DMA 対応内部 RAM を ~1.6 KiB/個 使うため、
-    // RTP 受信が走らないこれらのモードでは 2026-07 当時の 3 / 4 に絞る。
-    // (sdkconfig の 6 / 10 は RTP 受信 (L16 48 kHz, ~70 pkt/s) 用。alpha.3 で
-    // CoreS3 も 6 / 10 に戻した直後、Gemini Live の setup 直後に esp-aes の
-    // 1.6 KiB 確保が失敗して切断 → 再接続不能になった。)
-    // RX BA ウィンドウは静的 RX の 2 倍以下という制約があるので合わせて縮める。
+    // Conversation / ASR modes are the tightest internal-RAM cases (TLS +
+    // WebSocket + mic DMA). Trim the static RX/TX buffers as before.
     if (cfg.operation_mode == config::OperationMode::Conversation ||
         cfg.operation_mode == config::OperationMode::AsrLocal) {
         wifi_cfg.static_rx_buf_num = 3;
@@ -210,14 +333,15 @@ void wifi_start(const config::DeviceConfig& cfg)
                  static_cast<unsigned>(cfg.operation_mode), wifi_cfg.static_rx_buf_num,
                  wifi_cfg.static_tx_buf_num);
     }
-    ESP_ERROR_CHECK(esp_wifi_init(&wifi_cfg));
+    if (!g_wifi_inited.load(std::memory_order_acquire)) {
+        ESP_ERROR_CHECK(esp_wifi_init(&wifi_cfg));
+        g_wifi_inited.store(true, std::memory_order_release);
 
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                               &event_handler, nullptr));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                               &event_handler, nullptr));
+        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                                   &event_handler, nullptr));
+        ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                                   &event_handler, nullptr));
 
-    if (g_sta_retry_timer == nullptr) {
         const esp_timer_create_args_t args = {
             .callback = &sta_retry_timer_cb,
             .arg = nullptr,
@@ -228,21 +352,33 @@ void wifi_start(const config::DeviceConfig& cfg)
         ESP_ERROR_CHECK(esp_timer_create(&args, &g_sta_retry_timer));
     }
 
-    if (cfg.wifi_ssid.empty()) {
-        ESP_LOGI(kTag, "no SSID configured — Wi-Fi driver initialised but not started");
-        return;
-    }
+    copy_field(reinterpret_cast<std::uint8_t*>(g_configured_ssid),
+               sizeof(g_configured_ssid), cfg.wifi_ssid.c_str());
 
     wifi_config_t sta_cfg{};
-    std::strncpy(reinterpret_cast<char*>(sta_cfg.sta.ssid),
-                 cfg.wifi_ssid.c_str(), sizeof(sta_cfg.sta.ssid) - 1);
-    std::strncpy(reinterpret_cast<char*>(sta_cfg.sta.password),
-                 cfg.wifi_password.c_str(), sizeof(sta_cfg.sta.password) - 1);
+    copy_field(sta_cfg.sta.ssid, sizeof(sta_cfg.sta.ssid), cfg.wifi_ssid.c_str());
+    copy_field(sta_cfg.sta.password, sizeof(sta_cfg.sta.password),
+               cfg.wifi_password.c_str());
+
+    // DHCP is the default; malformed saved static values intentionally fall
+    // back to DHCP so a hand-edited NVS blob cannot strand the device.
+    (void)apply_sta_ipv4(cfg.wifi_static_ip, cfg.wifi_gateway, cfg.wifi_dns);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
+    // Always start the driver. With an empty SSID this keeps the STA
+    // interface ready for first-run scans/temporary connections; the event
+    // handler suppresses the automatic connect.
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(kTag, "connecting to SSID: %s", cfg.wifi_ssid.c_str());
+
+    if (cfg.wifi_ssid.empty()) {
+        ESP_LOGI(kTag, "no SSID configured — Wi-Fi driver started, STA connect suppressed");
+    } else if (g_setup_mode.load(std::memory_order_acquire)) {
+        ESP_LOGI(kTag, "setup mode active — stored SSID '%s' connect suppressed",
+                 cfg.wifi_ssid.c_str());
+    } else {
+        ESP_LOGI(kTag, "connecting to SSID: %s", cfg.wifi_ssid.c_str());
+    }
 }
 
 bool wifi_is_connected()
@@ -250,21 +386,139 @@ bool wifi_is_connected()
     return g_connected.load(std::memory_order_acquire);
 }
 
+std::vector<WifiScanResult> wifi_scan()
+{
+    std::vector<WifiScanResult> results;
+    if (!g_wifi_inited.load(std::memory_order_acquire)) return results;
+
+    stop_retry_timer();
+    wifi_scan_config_t scan_cfg{};
+    scan_cfg.show_hidden = false;
+    esp_err_t err = esp_wifi_scan_start(&scan_cfg, true);
+    if (err != ESP_OK) {
+        ESP_LOGW(kTag, "scan start failed: %s", esp_err_to_name(err));
+        return results;
+    }
+
+    std::uint16_t count = 0;
+    err = esp_wifi_scan_get_ap_num(&count);
+    if (err != ESP_OK || count == 0) {
+        ESP_LOGI(kTag, "scan complete: no networks");
+        return results;
+    }
+    std::vector<wifi_ap_record_t> aps(count);
+    err = esp_wifi_scan_get_ap_records(&count, aps.data());
+    if (err != ESP_OK) {
+        ESP_LOGW(kTag, "scan get records failed: %s", esp_err_to_name(err));
+        return results;
+    }
+
+    results.reserve(count);
+    for (std::uint16_t i = 0; i < count; ++i) {
+        const auto* ssid = reinterpret_cast<const char*>(aps[i].ssid);
+        if (ssid[0] == '\0') continue;
+        results.push_back(WifiScanResult{
+            .ssid = ssid,
+            .rssi = aps[i].rssi,
+            .secure = aps[i].authmode != WIFI_AUTH_OPEN,
+        });
+    }
+    // AP records contain one entry per BSSID. Sort strongest first, then drop
+    // repeated SSIDs so the setup page offers each network only once.
+    std::sort(results.begin(), results.end(), [](const auto& a, const auto& b) {
+        return a.rssi > b.rssi;
+    });
+    std::unordered_set<std::string> seen;
+    results.erase(std::remove_if(results.begin(), results.end(),
+                                 [&seen](const WifiScanResult& result) {
+                                     return !seen.insert(result.ssid).second;
+                                 }),
+                  results.end());
+    ESP_LOGI(kTag, "scan complete: %u unique networks", static_cast<unsigned>(results.size()));
+    return results;
+}
+
+bool wifi_connect_temporary(const std::string& ssid, const std::string& password,
+                            const std::string& static_ip, const std::string& gateway,
+                            const std::string& dns)
+{
+    if (!g_wifi_inited.load(std::memory_order_acquire) || g_sta_netif == nullptr) {
+        return false;
+    }
+    if (ssid.empty() || ssid.size() > 32 || password.size() > 64) {
+        ESP_LOGW(kTag, "temporary connect rejected: invalid SSID/password length");
+        return false;
+    }
+
+    g_setup_mode.store(true, std::memory_order_release);
+    stop_retry_timer();
+    g_connected.store(false, std::memory_order_release);
+    esp_err_t err = esp_wifi_disconnect();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_CONNECT) {
+        ESP_LOGW(kTag, "disconnect before setup returned %s", esp_err_to_name(err));
+    }
+
+    wifi_config_t sta_cfg{};
+    copy_field(sta_cfg.sta.ssid, sizeof(sta_cfg.sta.ssid), ssid.c_str());
+    copy_field(sta_cfg.sta.password, sizeof(sta_cfg.sta.password), password.c_str());
+    if (esp_wifi_set_config(WIFI_IF_STA, &sta_cfg) != ESP_OK) return false;
+    (void)apply_sta_ipv4(static_ip, gateway, dns);
+
+    err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        ESP_LOGW(kTag, "temporary connect start failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    for (int i = 0; i < 200; ++i) {
+        if (g_connected.load(std::memory_order_acquire)) {
+            ESP_LOGI(kTag, "temporary connection succeeded: SSID=%s IP=%s",
+                     ssid.c_str(), wifi_ip_address().c_str());
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    ESP_LOGW(kTag, "temporary connection timed out after 20 s: SSID=%s", ssid.c_str());
+    return false;
+}
+
+std::string wifi_ip_address()
+{
+    if (g_sta_netif == nullptr) return {};
+    esp_netif_ip_info_t info{};
+    if (esp_netif_get_ip_info(g_sta_netif, &info) != ESP_OK || info.ip.addr == 0) {
+        return {};
+    }
+    char ip[16] = {};
+    std::snprintf(ip, sizeof(ip), IPSTR, IP2STR(&info.ip));
+    return ip;
+}
+
+void wifi_set_setup_mode(bool active)
+{
+    const bool was_active = g_setup_mode.exchange(active, std::memory_order_acq_rel);
+    if (active) {
+        stop_retry_timer();
+        ESP_LOGI(kTag, "setup mode enabled — automatic STA reconnect paused");
+        return;
+    }
+    if (was_active) {
+        ESP_LOGI(kTag, "setup mode disabled — automatic STA reconnect resumed");
+        if (!g_connected.load(std::memory_order_acquire) &&
+            !g_ap_active.load(std::memory_order_acquire) &&
+            g_configured_ssid[0] != '\0' &&
+            g_wifi_inited.load(std::memory_order_acquire)) {
+            (void)esp_wifi_connect();
+        }
+    }
+}
+
+bool wifi_setup_mode()
+{
+    return g_setup_mode.load(std::memory_order_acquire);
+}
+
 // --- SoftAP provisioning ----------------------------------------------------
-//
-// Triggered from the on-device Settings UI when home Wi-Fi credentials are
-// missing/wrong. Brings up an isolated AP on top of the existing STA driver
-// (APSTA dual mode) so the user can join the AP from an iPhone — which has
-// no Web Bluetooth — and configure home Wi-Fi through the same settings_wifi
-// HTTP page used over STA. STA stays attempting reconnect in parallel; we
-// intentionally do not tear the AP down on STA_GOT_IP because the user is
-// often mid-edit when their changes take effect.
-//
-// Credentials are derived from the STA MAC (same low 3 bytes already used
-// for the BLE advertising name and mDNS hostname) so they are stable across
-// reboots and printed/displayed on the QR screen:
-//   SSID = "Stackchan-AABBCC"  (6 hex chars)
-//   PSK  = "sc-AABBCCDD"       (8 hex chars; 11 char total; WPA2 minimum 8)
 
 namespace {
 
@@ -274,29 +528,23 @@ void derive_ap_credentials()
     std::uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     std::snprintf(g_ap_ssid, sizeof(g_ap_ssid),
-                  "Stackchan-%02X%02X%02X", mac[3], mac[4], mac[5]);
+                  "%s-%02X%02X%02X", config::device_name_prefix(),
+                  mac[3], mac[4], mac[5]);
     std::snprintf(g_ap_pw, sizeof(g_ap_pw),
                   "sc-%02x%02x%02x%02x", mac[2], mac[3], mac[4], mac[5]);
 }
 
-} // namespace
-
-// Worker task body — runs the parts of AP bring-up that may take O(seconds)
-// (HTTP server start + handle polling) off the caller's task so a tap
-// handler in demo_loop returns quickly and the QR screen appears within
-// one render frame.
 void ap_post_start_worker(void*)
 {
     if (g_boot_cfg != nullptr) {
         // wifi_config::start is idempotent — returns AlreadyStarted if the
-        // server is already up from a previous STA_GOT_IP. The server
-        // binds to INADDR_ANY so it serves both AP and STA interfaces.
+        // server is already up from a previous STA_GOT_IP. The server binds
+        // to INADDR_ANY so it serves both AP and STA interfaces.
         (void)wifi_config::start(*g_boot_cfg);
     }
     wifi_config::set_provisioning_mode(true);
+    wifi_config::set_first_run_mode(g_ap_first_run.load(std::memory_order_acquire));
     captive_portal::start_dns();
-    // Poll up to ~2 s for the init task to publish its server handle.
-    // Done off the caller so demo_loop isn't blocked.
     for (int i = 0; i < 40; ++i) {
         if (auto h = wifi_config::handle(); h != nullptr) {
             captive_portal::register_http_catchall(h);
@@ -307,46 +555,42 @@ void ap_post_start_worker(void*)
     vTaskDelete(nullptr);
 }
 
-void wifi_enable_ap_mode()
-{
-    if (g_ap_active.load(std::memory_order_acquire)) return;
+} // namespace
 
+void wifi_enable_ap_mode(bool first_run)
+{
+    if (g_ap_active.load(std::memory_order_acquire)) {
+        if (first_run) g_ap_first_run.store(true, std::memory_order_release);
+        return;
+    }
+
+    g_ap_first_run.store(first_run, std::memory_order_release);
+    // Pause background STA reconnect scans for every SoftAP session. The
+    // shared radio otherwise leaves the AP channel periodically for full scans,
+    // which can make a phone fail to join or drop right after joining. Explicit
+    // connect requests from the settings page still work; leaving AP restores
+    // normal automatic reconnect.
+    wifi_set_setup_mode(true);
     derive_ap_credentials();
     if (g_ap_netif == nullptr) {
         g_ap_netif = esp_netif_create_default_wifi_ap();
     }
 
-    // APSTA keeps the STA side of the driver running so reconnect attempts
-    // continue in background; the user can fix credentials and watch them
-    // take effect without rebooting.
-    //
-    // Use error-returns instead of ESP_ERROR_CHECK throughout: set_mode can
-    // legitimately fail when STA is mid-reconnect-storm (wrong password
-    // configured → tight WIFI_EVENT_STA_DISCONNECTED → esp_wifi_connect()
-    // loop) and aborting the entire firmware on a transient set_mode error
-    // looks to the user like "tap did nothing" (the device just reboots).
-    // set_mode(APSTA) can transiently fail while STA is mid-reconnect-storm
-    // (wrong password → tight esp_wifi_connect() loop). Retry a few times
-    // before giving up so a single "AP モード" tap reliably brings the AP up.
-    // Same retry budget / task-blocking rationale as wifi_disable_ap_mode.
-    {
-        constexpr int kMaxRetries = 5;
-        esp_err_t err = ESP_OK;
-        for (int i = 0; i < kMaxRetries; ++i) {
-            err = esp_wifi_set_mode(WIFI_MODE_APSTA);
-            if (err == ESP_OK) break;
-            ESP_LOGW(kTag, "set_mode(APSTA) failed (try %d/%d): %s",
-                     i + 1, kMaxRetries, esp_err_to_name(err));
-            if (i + 1 < kMaxRetries) vTaskDelay(pdMS_TO_TICKS(100));
-        }
-        if (err != ESP_OK) {
-            // Nothing enabled yet: leave the driver as-is (STA) and bail so a
-            // later tap can retry. g_ap_active stays false — consistent.
-            ESP_LOGE(kTag, "set_mode(APSTA) failed after %d tries: %s"
-                           " — AP not enabled",
-                     kMaxRetries, esp_err_to_name(err));
-            return;
-        }
+    // APSTA keeps the STA side alive for candidate-network scans/connects.
+    constexpr int kMaxRetries = 5;
+    esp_err_t err = ESP_OK;
+    for (int i = 0; i < kMaxRetries; ++i) {
+        err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+        if (err == ESP_OK) break;
+        ESP_LOGW(kTag, "set_mode(APSTA) failed (try %d/%d): %s",
+                 i + 1, kMaxRetries, esp_err_to_name(err));
+        if (i + 1 < kMaxRetries) vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "set_mode(APSTA) failed after %d tries: %s — AP not enabled",
+                 kMaxRetries, esp_err_to_name(err));
+        g_ap_first_run.store(false, std::memory_order_release);
+        return;
     }
 
     wifi_config_t ap_cfg{};
@@ -357,22 +601,23 @@ void wifi_enable_ap_mode()
     ap_cfg.ap.authmode       = WIFI_AUTH_WPA2_PSK;
     ap_cfg.ap.max_connection = 4;
     ap_cfg.ap.pmf_cfg.required = false;
-    if (esp_err_t err = esp_wifi_set_config(WIFI_IF_AP, &ap_cfg); err != ESP_OK) {
+    if (esp_err_t cfg_err = esp_wifi_set_config(WIFI_IF_AP, &ap_cfg); cfg_err != ESP_OK) {
         ESP_LOGE(kTag, "set_config(AP) failed: %s — reverting to STA",
-                 esp_err_to_name(err));
+                 esp_err_to_name(cfg_err));
         (void)esp_wifi_set_mode(WIFI_MODE_STA);
+        g_ap_first_run.store(false, std::memory_order_release);
         return;
     }
 
-    // esp_wifi_start() is idempotent; calling it after set_mode picks up the
-    // new AP interface even when STA was already running.
-    esp_err_t st = esp_wifi_start();
+    const esp_err_t st = esp_wifi_start();
     if (st != ESP_OK && st != ESP_ERR_WIFI_NOT_INIT) {
         ESP_LOGW(kTag, "esp_wifi_start (AP) returned %s", esp_err_to_name(st));
     }
+    // Advertise the setup page in DHCP so phones open it immediately after
+    // joining the QR network. DNS hijacking remains the fallback for clients
+    // that do not consume RFC 8910 option 114.
+    captive_portal::configure_dhcp_captive_portal(g_ap_netif);
 
-    // Read the AP IP back so the QR screen reflects whatever the driver
-    // chose (default 192.168.4.1 unless reconfigured elsewhere).
     if (g_ap_netif != nullptr) {
         esp_netif_ip_info_t ip{};
         if (esp_netif_get_ip_info(g_ap_netif, &ip) == ESP_OK && ip.ip.addr != 0) {
@@ -381,34 +626,27 @@ void wifi_enable_ap_mode()
     }
 
     g_ap_active.store(true, std::memory_order_release);
-    ESP_LOGI(kTag, "AP up: SSID=\"%s\" PW=\"%s\" IP=%s",
-             g_ap_ssid, g_ap_pw, g_ap_ip);
+    // Never log the AP password. It is shown on-device / in the QR payload.
+    ESP_LOGI(kTag, "AP up: SSID=\"%s\" IP=%s first_run=%d",
+             g_ap_ssid, g_ap_ip, static_cast<int>(first_run));
 
-    // Hand off the rest (HTTP server / mDNS / captive portal) to a worker
-    // task. demo_loop returns immediately so the next render-task tick
-    // sees ap_active() = true and ap_screen paints. Stack 3 KiB internal
-    // RAM — flash-safe (no OTA / NVS writes happen here).
-    xTaskCreate(&ap_post_start_worker, "ap-post-start", 3 * 1024, nullptr,
-                tskIDLE_PRIORITY + 2, nullptr);
+    if (xTaskCreate(&ap_post_start_worker, "ap-post-start", 3 * 1024, nullptr,
+                    tskIDLE_PRIORITY + 2, nullptr) != pdPASS) {
+        ESP_LOGE(kTag, "failed to spawn AP HTTP worker");
+        g_ap_active.store(false, std::memory_order_release);
+        g_ap_first_run.store(false, std::memory_order_release);
+    }
 }
 
-void wifi_disable_ap_mode()
+bool wifi_disable_ap_mode()
 {
-    if (!g_ap_active.load(std::memory_order_acquire)) return;
+    if (!g_ap_active.load(std::memory_order_acquire)) return true;
 
-    // Drop back to STA-only *first*, and only tear down the portal / clear the
-    // provisioning + ap_active flags once that actually succeeds. Otherwise a
-    // failed set_mode leaves the AP radio up while the UI reports it closed —
-    // the "画面は閉じたが AP は生きている" inconsistency. set_mode(STA) can
-    // transiently fail mid-reconnect-storm (the typical provisioning state:
-    // wrong password → tight esp_wifi_connect() retry loop), so retry a few
-    // times before giving up.
-    //
-    // Called from the app_main touch loop (ap_screen::handle_tap /
-    // device_ui). Rendering lives on a separate pinned task, so a short block
-    // here only stalls touch polling / M5.update(). The common path succeeds
-    // on the first try (no delay); the 5×100 ms = 500 ms worst case only hits
-    // on total failure, which is rare and preferable to a stuck AP.
+    const bool was_first_run = g_ap_first_run.load(std::memory_order_acquire);
+
+    // Drop back to STA-only first, and only tear down the portal once that
+    // succeeds. A failed set_mode leaves the AP fully alive so the UI can
+    // retry rather than claiming success.
     constexpr int kMaxRetries = 5;
     esp_err_t err = ESP_OK;
     for (int i = 0; i < kMaxRetries; ++i) {
@@ -419,17 +657,12 @@ void wifi_disable_ap_mode()
         if (i + 1 < kMaxRetries) vTaskDelay(pdMS_TO_TICKS(100));
     }
     if (err != ESP_OK) {
-        // Keep the AP fully alive so the next "終了" tap can retry. Nothing
-        // has been torn down yet, so there's no state to restore.
         ESP_LOGE(kTag, "set_mode(STA) on AP-disable failed after %d tries: %s"
                        " — leaving AP up so it can be retried",
                  kMaxRetries, esp_err_to_name(err));
-        return;
+        return false;
     }
 
-    // STA-only confirmed. Now tear down the captive portal so STA-mode clients
-    // don't see the 404-to-root redirect anymore (the catch-all is harmless
-    // over STA, but it'd hijack legitimate 404s from poorly-written clients).
     captive_portal::stop_dns();
     if (auto h = wifi_config::handle(); h != nullptr) {
         captive_portal::unregister_http_catchall(h);
@@ -437,17 +670,30 @@ void wifi_disable_ap_mode()
     wifi_config::set_provisioning_mode(false);
     g_ap_active.store(false, std::memory_order_release);
     g_ap_client_count.store(0, std::memory_order_release);
-    // Resume the full-rate STA reconnect immediately: cancel any throttled
-    // retry and kick a connect now (harmless error return if an attempt is
-    // already in flight or the STA is currently paused-while-client).
-    if (g_sta_retry_timer != nullptr) esp_timer_stop(g_sta_retry_timer);
-    if (!g_connected.load(std::memory_order_acquire)) esp_wifi_connect();
+    stop_retry_timer();
+
+    // First-run finish deliberately keeps setup mode active and preserves the
+    // accepted candidate association until the caller reboots into the saved
+    // config. The normal settings-AP path resumes reconnecting immediately.
+    if (!was_first_run) {
+        wifi_set_setup_mode(false);
+        if (!g_connected.load(std::memory_order_acquire)) {
+            (void)esp_wifi_connect();
+        }
+    }
+    g_ap_first_run.store(false, std::memory_order_release);
     ESP_LOGI(kTag, "AP down");
+    return true;
 }
 
 bool wifi_ap_active()
 {
     return g_ap_active.load(std::memory_order_acquire);
+}
+
+bool wifi_ap_first_run()
+{
+    return g_ap_first_run.load(std::memory_order_acquire);
 }
 
 bool wifi_ap_info(char* ssid, std::size_t ssid_cap,

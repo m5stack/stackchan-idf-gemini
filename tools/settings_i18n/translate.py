@@ -50,7 +50,7 @@ GOOGLE_CLOUD_FAVICON = 'data:image/svg+xml,' + quote(GOOGLE_CLOUD_ICON_SVG, safe
 GOOGLE_CLOUD_HEADER_ICON = GOOGLE_CLOUD_ICON_SVG.replace(
     '<svg ', '<svg width="34" height="24" style="flex:none" aria-hidden="true" focusable="false" ', 1
 )
-GOOGLE_CLOUD_TITLE = 'Google Cloud Stack-chan Settings'
+GOOGLE_CLOUD_TITLE = 'Google Cloud StackChan Settings'
 
 # Copyediting regressions that must not reach either the firmware page or the
 # hosted BLE page. These are deliberately concrete: the translation catalog is
@@ -191,6 +191,12 @@ def apply_google_branding(text: str) -> str:
             "error: settings branding markers not found; update apply_google_branding() "
             "for the changed upstream title/header markup"
         )
+    # The upstream English catalog retains the project spelling. Apply the
+    # customer product name only to the generated Gemini settings page. Keep
+    # JavaScript identifiers such as StackchanSettings untouched.
+    text = text.replace("Stack-chan", "StackChan")
+    text = text.replace("Stackchan-XXXXXX", "StackChan-XXXXXX")
+    text = text.replace("Stackchan AP", "StackChan AP")
     return text
 
 

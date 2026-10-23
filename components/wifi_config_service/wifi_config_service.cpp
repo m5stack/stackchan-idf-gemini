@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include <config_service/product.hpp>
 #include <esp_app_desc.h>
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -83,7 +84,8 @@ tl::expected<void, Error> start_mdns()
     }
 
     mdns_hostname_set(g_hostname);
-    mdns_instance_name_set("Stack-chan config");
+    mdns_instance_name_set(config::gemini_only() ? "StackChan config"
+                                                 : "Stack-chan config");
 
     // Plain HTTP on 80. TLS turned out too heavy on internal RAM (each
     // active TLS session was contending with the conversation task's
@@ -137,7 +139,7 @@ tl::expected<httpd_handle_t, Error> start_http_server()
     // internal RAM; the runtime cost is the slot count we actually register,
     // not the cap. add() now ESP_LOGEs on registration failure so a future
     // count/cap drift is loud instead of silent.
-    cfg.max_uri_handlers = 96;  // /api/coredump (2) + /api/debug/crash を追加した 2026-09-17 時点で 77
+    cfg.max_uri_handlers = 128; // 96 → 128 leaves room for first-run onboarding routes
     // Stack MUST live in internal RAM: the OTA control handler calls
     // esp_ota_begin → esp_partition_mmap, which disables CPU cache while
     // remapping flash. PSRAM is cached, so a PSRAM-resident stack becomes
@@ -269,6 +271,11 @@ void set_provisioning_mode(bool active)
     // mutex, and a flag set before server start is read back correctly
     // once the first handler call comes in.
     http::set_provisioning_mode(active);
+}
+
+void set_first_run_mode(bool active)
+{
+    http::set_first_run_mode(active);
 }
 
 void set_battery(int millivolts, int milliamps, int percent)

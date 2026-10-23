@@ -21,6 +21,9 @@ void set_wifi_connected(bool connected);
 // while set, and surfaces "provisioning_mode" in /api/status.
 void set_provisioning_mode(bool active);
 
+// Mark the HTTP service as serving the dedicated first-run onboarding flow.
+void set_first_run_mode(bool active);
+
 // Update the cached battery snapshot (mV / mA / percent) exposed by /api/status.
 void set_battery(int millivolts, int milliamps, int percent);
 

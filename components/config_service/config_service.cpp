@@ -375,7 +375,8 @@ static void on_sync()
         uint8_t mac[6] = {};
         esp_read_mac(mac, ESP_MAC_WIFI_STA);
         std::snprintf(g_device_name, sizeof(g_device_name),
-                      "Stackchan-%02X%02X%02X", mac[3], mac[4], mac[5]);
+                      "%s-%02X%02X%02X", device_name_prefix(),
+                      mac[3], mac[4], mac[5]);
     }
     ble_svc_gap_device_name_set(g_device_name);
 

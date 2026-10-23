@@ -9,6 +9,7 @@
 #include "ap_screen.hpp"
 #include "atom_status.hpp"
 #include "device_ui.hpp"
+#include "first_run.hpp"
 
 namespace stackchan::app::screens {
 
@@ -17,8 +18,8 @@ namespace {
 // --- Adapters over the existing overlay modules ---------------------------
 
 // SoftAP provisioning QR screen. Draws straight to the panel (M5GFX::qrcode)
-// and swallows every tap while AP mode is up (the on-screen 終了 button is
-// the dismiss path on touch boards).
+// and swallows every tap while AP mode is up. The on-screen action is Skip
+// during first-run setup and Exit AP for the normal settings SoftAP.
 class ApScreen final : public Screen {
 public:
     explicit ApScreen(M5GFX& display) : display_{display} {}
@@ -45,6 +46,17 @@ public:
     void handle_flick(int dx, int dy) override { ui::handle_flick(dx, dy); }
 };
 
+// First-run prompt / success card. Buttons are touch on CoreS3 and the A
+// button on tiny boards; while setup is active the SoftAP QR screen above it
+// owns the panel.
+class FirstRunScreen final : public Screen {
+public:
+    bool active() const override { return first_run::screen_active(); }
+    bool draw(avatar::RichCanvas& canvas) override { return first_run::draw(canvas); }
+    bool handle_tap(int x, int y) override { return first_run::handle_tap(x, y); }
+    void poll_input() override { first_run::poll_button(); }
+};
+
 // Button-toggled status overlay (AtomS3R / AtomS3, no LCD touch). All input
 // arrives through the BtnA gesture vocabulary polled each tick.
 class AtomStatusScreen final : public Screen {
@@ -59,10 +71,11 @@ public:
 // Storage for the adapters (no heap; exactly one settings-UI flavour is
 // constructed). Priority = index order in g_stack.
 alignas(ApScreen) unsigned char g_ap_storage[sizeof(ApScreen)];
+FirstRunScreen g_first_run;
 DeviceUiScreen g_device_ui;
 AtomStatusScreen g_atom_status;
 
-std::array<Screen*, 2> g_stack{};
+std::array<Screen*, 3> g_stack{};
 std::size_t g_count = 0;
 
 } // namespace
@@ -71,6 +84,7 @@ void init(M5GFX& display, SharedState& state, const stackchan::board::BoardProfi
 {
     g_count = 0;
     g_stack[g_count++] = new (g_ap_storage) ApScreen{display};
+    g_stack[g_count++] = &g_first_run;
     if (profile.button_overlay_ui) {
         atom_status::init(state);
         g_stack[g_count++] = &g_atom_status;
@@ -101,7 +115,14 @@ bool draw_overlay(avatar::RichCanvas& canvas)
 void poll_inputs()
 {
     for (std::size_t i = 0; i < g_count; ++i) {
+        const bool owns_input = g_stack[i]->active();
         g_stack[i]->poll_input();
+        // First-run owns the button until its own gesture is complete. This
+        // matters for Skip: the same long-press release must not also toggle
+        // the Atom status overlay underneath. Other overlays keep their old
+        // behaviour, including Atom's A-button shortcut for closing the
+        // normal settings SoftAP.
+        if (owns_input && g_stack[i] == &g_first_run) break;
     }
 }
 

@@ -3,6 +3,7 @@
 
 #include <config_service/task_stack.hpp>
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -57,6 +58,7 @@
 #include "dance_poc.hpp"
 #include "espnow_poc/espnow_poc.hpp"
 #include "espnow_remote/espnow_remote.hpp"
+#include "first_run.hpp"
 #include "screens.hpp"
 #include "servo_limits.hpp"
 #include "servo_task.hpp"
@@ -82,6 +84,20 @@
 namespace {
 
 constexpr const char* kTag = "stackchan";
+
+// The render task starts showing the first-run prompt before app_main reaches
+// run_demo_loop(). Pump touch here during the boot waits so the on-screen
+// Start setup / Skip buttons are live as soon as they are visible. Only the
+// app_main task calls M5.update(), matching the normal demo-loop ownership.
+void pump_screen_touch_inputs()
+{
+    M5.update();
+    stackchan::app::screens::poll_inputs();
+    const auto detail = M5.Touch.getDetail();
+    if (detail.wasPressed()) {
+        (void)stackchan::app::screens::handle_tap(detail.x, detail.y);
+    }
+}
 
 // Debug-only switch: when true, the NeoPixel strip stays uninitialised AND the
 // led_task is never spawned. Kept around because the lgfx i2c mutex has a
@@ -375,6 +391,13 @@ extern "C" void app_main()
     // Receiver / Sender どちらも WiFi 固定チャネル (AP 非接続) なので、STA 接続を
     // 前提とする httpd / 会話 / wifi_audio / STA 待ちの各処理を等しくスキップする。
     const bool espnow_any = espnow_mode || espnow_sender_mode;
+
+    // Gemini customer builds must not reach the avatar conversation path until
+    // Wi-Fi and the Gemini API key are configured. ESP-NOW modes never use the
+    // Gemini connection, so they remain on their existing path.
+    const bool first_run_required =
+        stackchan::config::gemini_only() && !espnow_any &&
+        (cfg.wifi_ssid.empty() || cfg.gemini_api_key.empty());
 
     // Resident camera init (M5Base only; no-op elsewhere / slim builds).
     // Must run after the i2c dump (which uses In_I2C) and before any task
@@ -954,10 +977,25 @@ extern "C" void app_main()
     (void)api_key; (void)xiaozhi_url; (void)xiaozhi_token;
 #endif
 
-    // Overlay screen stack: SoftAP QR screen + the per-board settings UI
-    // flavour (device_ui on touch boards, atom_status on button-only ones —
-    // profile.button_overlay_ui decides). render_task and demo_loop
-    // dispatch through screens:: from here on.
+    // Overlay screen stack: SoftAP QR screen + first-run gate + the per-board
+    // settings UI flavour (device_ui on touch boards, atom_status on
+    // button-only ones — profile.button_overlay_ui decides). render_task and
+    // demo_loop dispatch through screens:: from here on.
+    std::atomic<bool> conversation_started{false};
+    auto start_conversation_once = [espnow_any, &conversation_started]() {
+        bool expected = false;
+        if (!conversation_started.compare_exchange_strong(expected, true)) return;
+#if CONFIG_STACKCHAN_CONVERSATION_ENABLED
+        if (!espnow_any) {
+            stackchan::app::start_conversation_task(*g_conversation_args);
+        }
+#else
+        (void)espnow_any;
+        ESP_LOGI(kTag, "conversation: disabled at compile time (slim build)");
+#endif
+    };
+    stackchan::app::first_run::init(first_run_required, cfg, profile.button_overlay_ui);
+
     stackchan::app::diag_heap("pre-screens/render");
     stackchan::app::boot_splash::wait_min_time();
     stackchan::app::screens::init(board.display(), *g_state, profile);
@@ -1064,13 +1102,11 @@ extern "C" void app_main()
     // so the two never contend for the bus. Gated by Kconfig so the AtomS3
     // (no-PSRAM) slim profile drops the whole TLS / WebSocket / assistant
     // PCM ring stack at compile time.
-#if CONFIG_STACKCHAN_CONVERSATION_ENABLED
-    if (!espnow_any) {
-        stackchan::app::start_conversation_task(*g_conversation_args);
+    // First-run skips this call until the prompt is dismissed. The atomic
+    // helper also tolerates a Skip tap racing the normal boot continuation.
+    if (!first_run_required) {
+        start_conversation_once();
     }
-#else
-    ESP_LOGI(kTag, "conversation: disabled at compile time (slim build)");
-#endif
 
     // Mic-driven lip sync. Activates only when BOTH the conversation backend
     // AND the jtts idle babble are off — that way nothing else is driving
@@ -1152,7 +1188,14 @@ extern "C" void app_main()
         // ADR-001: 起動確認。主要サブシステム (表示・サーボ・無線) の初期化が済んだ
         // この時点で bootctl の pending を落とす。失敗した起動はブートローダーが
         // 試行回数で数え、上限で Recovery に落とす。
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        if (first_run_required) {
+            for (int i = 0; i < 40; ++i) {
+                pump_screen_touch_inputs();
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
         if (auto r = stackchan::flash_layout::confirm_boot(); r) {
             ESP_LOGI(kTag, "boot confirmed (bootctl pending cleared)");
         } else {
@@ -1212,8 +1255,15 @@ extern "C" void app_main()
     // ESP-NOW モードは httpd も TTS も使わないので、httpd 待ちもボイス ロードも
     // 飛ばして即 demo_loop へ (顔 + 頭部追従のみ)。
     if (!espnow_any) {
-        for (int i = 0; i < 80 && !stackchan::wifi_config::http_started(); ++i) {
-            vTaskDelay(pdMS_TO_TICKS(500));
+        // First-run has no STA HTTP server until the user starts the SoftAP
+        // setup flow, so waiting here without dispatching touch made the
+        // on-screen buttons appear dead for the full 40-second timeout. Pump
+        // the prompt while waiting; Start exits as soon as the AP HTTP server
+        // is up, and Skip can exit immediately because no STA server is needed.
+        for (int i = 0; i < 800 && !stackchan::wifi_config::http_started(); ++i) {
+            if (first_run_required) pump_screen_touch_inputs();
+            if (first_run_required && !stackchan::app::first_run::active()) break;
+            vTaskDelay(pdMS_TO_TICKS(50));
         }
         // ASR モードでは重い HMM / unit ボイスをロードしない — その内部/DMA RAM を
         // AFE + マイク I2S DMA に回すため。ウェイクワードの返事「はい」は軽い formant
@@ -1256,6 +1306,12 @@ extern "C" void app_main()
     // タイマー本体は demo_loop が回すので、ここは SharedState.lt の読み出しのみ。
     stackchan::wifi_config::set_lt_state_getter(&lt_state_view);
 
+    // Install the first-run continuation only once every app_main-owned
+    // subsystem is ready. Skip may be tapped while the boot wait is pumping
+    // screen input; set_ready_callback() then fires immediately, but the
+    // conversation task must not race the voice/model initialization above.
+    stackchan::app::first_run::set_ready_callback(start_conversation_once);
+
     stackchan::app::diag_heap("pre-demo_loop");
     stackchan::app::run_demo_loop({
         .state = g_state,
@@ -1269,6 +1325,7 @@ extern "C" void app_main()
         .conversation_enabled = cfg.openai_enabled,
         .jtts_idle_enabled = cfg.jtts_idle_enabled,
         .external_servo_control = espnow_mode,
+        .first_run_active = &stackchan::app::first_run::active,
         .limits = servo_limits,
     });
 }
